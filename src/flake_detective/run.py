@@ -30,7 +30,12 @@ from pathlib import Path
 from flake_detective import freeze
 from flake_detective.types import Arm
 
-_SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.M)
+# `-rf` prints "FAILED path::test[id] - AssertionError: ...". Matching `\S+` stops at the
+# first space, and a parametrised node id contains them: `test_counting[(x, y)-2]` is
+# captured as `test_counting[(x,`. The truncated id is stable across runs, so it never
+# produced a false flake - but two different parametrisations can truncate to the *same*
+# string, which would merge them and hide a flake in whichever one flipped.
+_SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(.+?)(?:\s+-\s.*)?$", re.MULTILINE)
 
 
 def _env(hashseed: int, epoch: float | None) -> dict[str, str]:

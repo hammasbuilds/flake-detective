@@ -96,3 +96,26 @@ def test_a_collection_error_is_unscoreable_not_a_failure(tmp_path: Path):
     # pytest exits 2 on a collection error; treating that as "every test failed" would
     # flood the report with tests that were never run.
     assert run_once(d) is None
+
+
+def test_a_parametrised_failure_id_is_not_truncated(tmp_path: Path):
+    r"""Node ids contain spaces, and `\S+` stops at the first one.
+
+    The truncated id is stable across runs, so it never produced a false flake here. It
+    would, though, merge two parametrisations that truncate to the same prefix - and a
+    flake in one of them would then be averaged away against the other.
+    """
+    d = tmp_path / "s"
+    d.mkdir()
+    (d / "test_p.py").write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize('sig', ['(x, y)', '(x, z)'])\n"
+        "def test_counting(sig):\n"
+        "    assert False\n",
+        encoding="utf-8",
+    )
+    failed = run_once(d)
+    assert failed is not None
+    assert len(failed) == 2, failed
+    assert all(f.endswith("]") for f in failed), failed
