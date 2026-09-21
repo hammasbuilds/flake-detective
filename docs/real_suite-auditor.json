@@ -1,0 +1,29 @@
+{
+  "total_tests": 24,
+  "seconds": 14.2,
+  "arms": [
+    {
+      "name": "baseline",
+      "description": "identical conditions, repeated",
+      "runs": 5
+    },
+    {
+      "name": "order",
+      "description": "the same tests, shuffled",
+      "runs": 5
+    },
+    {
+      "name": "hashseed",
+      "description": "PYTHONHASHSEED varied",
+      "runs": 5
+    },
+    {
+      "name": "clock",
+      "description": "the wall clock frozen at a different date each run",
+      "runs": 5
+    }
+  ],
+  "by_cause": {},
+  "flakes": [],
+  "always_failed": []
+}

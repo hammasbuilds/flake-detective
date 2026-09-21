@@ -1,0 +1,81 @@
+{
+  "sweep": [
+    {
+      "runs_per_arm": 1,
+      "detection": 0.75,
+      "attribution": 0.0,
+      "false_positive_rate": 0.0,
+      "seconds": 2.3,
+      "reported": {
+        "test_clock_dependent.py::test_second_is_even": "unknown",
+        "test_hash_dependent.py::test_first_of_a_set_is_stable": "unknown",
+        "test_nondeterministic.py::test_unseeded_random": "unknown"
+      }
+    },
+    {
+      "runs_per_arm": 2,
+      "detection": 1.0,
+      "attribution": 1.0,
+      "false_positive_rate": 0.0,
+      "seconds": 4.4,
+      "reported": {
+        "test_clock_dependent.py::test_second_is_even": "clock",
+        "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
+        "test_nondeterministic.py::test_unseeded_random": "nondeterminism",
+        "test_order_dependent.py::test_aaa_first_one_wins": "order"
+      }
+    },
+    {
+      "runs_per_arm": 3,
+      "detection": 1.0,
+      "attribution": 1.0,
+      "false_positive_rate": 0.0,
+      "seconds": 5.8,
+      "reported": {
+        "test_clock_dependent.py::test_second_is_even": "clock",
+        "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
+        "test_nondeterministic.py::test_unseeded_random": "nondeterminism",
+        "test_order_dependent.py::test_aaa_first_one_wins": "order"
+      }
+    },
+    {
+      "runs_per_arm": 5,
+      "detection": 1.0,
+      "attribution": 1.0,
+      "false_positive_rate": 0.0,
+      "seconds": 9.6,
+      "reported": {
+        "test_clock_dependent.py::test_second_is_even": "clock",
+        "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
+        "test_nondeterministic.py::test_unseeded_random": "nondeterminism",
+        "test_order_dependent.py::test_aaa_first_one_wins": "order"
+      }
+    },
+    {
+      "runs_per_arm": 7,
+      "detection": 1.0,
+      "attribution": 1.0,
+      "false_positive_rate": 0.0,
+      "seconds": 13.6,
+      "reported": {
+        "test_clock_dependent.py::test_second_is_even": "clock",
+        "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
+        "test_nondeterministic.py::test_unseeded_random": "nondeterminism",
+        "test_order_dependent.py::test_aaa_first_one_wins": "order"
+      }
+    },
+    {
+      "runs_per_arm": 11,
+      "detection": 1.0,
+      "attribution": 1.0,
+      "false_positive_rate": 0.0,
+      "seconds": 21.1,
+      "reported": {
+        "test_clock_dependent.py::test_second_is_even": "clock",
+        "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
+        "test_nondeterministic.py::test_unseeded_random": "nondeterminism",
+        "test_order_dependent.py::test_aaa_first_one_wins": "order"
+      }
+    }
+  ]
+}

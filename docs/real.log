@@ -1,0 +1,81 @@
+########## repo-surgeon
+==========================================================================
+FLAKE DETECTIVE
+==========================================================================
+47 tests, 4 arms, 46s
+
+  baseline   5 runs   identical conditions, repeated
+  order      5 runs   the same tests, shuffled
+  hashseed   5 runs   PYTHONHASHSEED varied
+  clock      5 runs   the wall clock frozen at a different date each run
+
+No flaky tests found across 5 runs per arm.
+A suite can still be flaky at a rate this many runs cannot see -
+raise --runs to lower that bound.
+
+wrote docs\real_repo-surgeon.json
+########## pr-referee
+==========================================================================
+FLAKE DETECTIVE
+==========================================================================
+37 tests, 4 arms, 61s
+
+  baseline   5 runs   identical conditions, repeated
+  order      5 runs   the same tests, shuffled
+  hashseed   5 runs   PYTHONHASHSEED varied
+  clock      5 runs   the wall clock frozen at a different date each run
+
+No flaky tests found across 5 runs per arm.
+A suite can still be flaky at a rate this many runs cannot see -
+raise --runs to lower that bound.
+
+wrote docs\real_pr-referee.json
+########## trace-to-patch
+==========================================================================
+FLAKE DETECTIVE
+==========================================================================
+30 tests, 4 arms, 12s
+
+  baseline   5 runs   identical conditions, repeated
+  order      5 runs   the same tests, shuffled
+  hashseed   5 runs   PYTHONHASHSEED varied
+  clock      5 runs   the wall clock frozen at a different date each run
+
+No flaky tests found across 5 runs per arm.
+A suite can still be flaky at a rate this many runs cannot see -
+raise --runs to lower that bound.
+
+wrote docs\real_trace-to-patch.json
+########## suite-auditor
+==========================================================================
+FLAKE DETECTIVE
+==========================================================================
+24 tests, 4 arms, 14s
+
+  baseline   5 runs   identical conditions, repeated
+  order      5 runs   the same tests, shuffled
+  hashseed   5 runs   PYTHONHASHSEED varied
+  clock      5 runs   the wall clock frozen at a different date each run
+
+No flaky tests found across 5 runs per arm.
+A suite can still be flaky at a rate this many runs cannot see -
+raise --runs to lower that bound.
+
+wrote docs\real_suite-auditor.json
+########## blast-radius
+==========================================================================
+FLAKE DETECTIVE
+==========================================================================
+28 tests, 4 arms, 17s
+
+  baseline   5 runs   identical conditions, repeated
+  order      5 runs   the same tests, shuffled
+  hashseed   5 runs   PYTHONHASHSEED varied
+  clock      5 runs   the wall clock frozen at a different date each run
+
+No flaky tests found across 5 runs per arm.
+A suite can still be flaky at a rate this many runs cannot see -
+raise --runs to lower that bound.
+
+wrote docs\real_blast-radius.json
+REAL DONE

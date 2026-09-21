@@ -1,0 +1,19 @@
+  .. sweep: 1 runs per arm
+  .. sweep: 2 runs per arm
+  .. sweep: 3 runs per arm
+  .. sweep: 5 runs per arm
+  .. sweep: 7 runs per arm
+  .. sweep: 11 runs per arm
+==================================================================
+RUNS PER ARM vs WHAT IS FOUND
+==================================================================
+ runs   detection   attribution   false pos    secs
+------------------------------------------------------------------
+    1        75%            0%          0%       2
+    2       100%          100%          0%       4
+    3       100%          100%          0%       6
+    5       100%          100%          0%      10
+    7       100%          100%          0%      14
+   11       100%          100%          0%      21
+
+wrote docs\sweep.json
