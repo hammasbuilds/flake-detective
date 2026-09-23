@@ -59,10 +59,7 @@ def test_monotonic_is_deliberately_left_alone():
     the only way this fails now is if freezing really has pinned the clock.
     """
     out = run_frozen(
-        "import time\n"
-        "a = time.monotonic()\n"
-        "time.sleep(0.05)\n"
-        "print(time.monotonic() - a > 0.01)",
+        "import time\na = time.monotonic()\ntime.sleep(0.05)\nprint(time.monotonic() - a > 0.01)",
         freeze.BASELINE_EPOCH,
     )
     assert out == "True"
