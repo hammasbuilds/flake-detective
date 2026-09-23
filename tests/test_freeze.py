@@ -46,12 +46,23 @@ def test_date_today_follows_the_freeze():
 
 
 def test_monotonic_is_deliberately_left_alone():
-    """Freezing it would hang any suite that waits for elapsed time to pass."""
+    """Freezing it would hang any suite that waits for elapsed time to pass.
+
+    The elapsed time comes from `time.sleep`, not from a busy loop. The first
+    version spun 200,000 empty iterations and asserted the clock had moved,
+    which is a race: on a fast machine the loop finishes inside the clock's
+    resolution, both readings are identical, and `>` is false. It passed for
+    months and then failed - a timing-dependent test inside a tool for finding
+    timing-dependent tests.
+
+    A sleep of 50 ms is orders of magnitude above any monotonic resolution, so
+    the only way this fails now is if freezing really has pinned the clock.
+    """
     out = run_frozen(
         "import time\n"
         "a = time.monotonic()\n"
-        "for _ in range(200000): pass\n"
-        "print(time.monotonic() > a)",
+        "time.sleep(0.05)\n"
+        "print(time.monotonic() - a > 0.01)",
         freeze.BASELINE_EPOCH,
     )
     assert out == "True"
