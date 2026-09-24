@@ -4,7 +4,7 @@
 <p align="center">
   <a href="#the-through-line">The through-line</a> &middot;
   <a href="#the-result">The result</a> &middot;
-  <a href="docs/RESULTS.md">Full results</a> &middot;
+  <a href="https://github.com/hammasbuilds/flake-detective/blob/main/docs/RESULTS.md">Full results</a> &middot;
   <a href="#how-it-works">How it works</a> &middot;
   <a href="#run-it">Run it</a> &middot;
   <a href="#what-this-does-not-do">What it does NOT do</a> &middot;
@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen" alt="zero dependencies">
   <img src="https://img.shields.io/badge/model-none%20required-success" alt="no model">
   <img src="https://img.shields.io/badge/tests-55-brightgreen" alt="tests">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
+  <a href="https://github.com/hammasbuilds/flake-detective/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
 </p>
 
 ---
@@ -122,7 +122,7 @@ a cause**, because a baseline that runs once cannot flip, and a control that can
 cannot rule out nondeterminism. Before that refusal was added, the one-run pass reported the
 nondeterministic test as `clock` — confidently, and wrongly.
 
-See [docs/RESULTS.md](docs/RESULTS.md) for the fixture, the full sweep and the real runs.
+See [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/blob/main/docs/RESULTS.md) for the fixture, the full sweep and the real runs.
 
 ## How it works
 
@@ -250,7 +250,7 @@ running them.
 
 | | |
 |---|---|
-| &#128202; **[Results](docs/RESULTS.md)** | The fixture, the sweep, and five real repositories |
+| &#128202; **[Results](https://github.com/hammasbuilds/flake-detective/blob/main/docs/RESULTS.md)** | The fixture, the sweep, and five real repositories |
 | **[suite-auditor](https://github.com/hammasbuilds/suite-auditor)** | What a passing suite does not check |
 | **[blast-radius](https://github.com/hammasbuilds/blast-radius)** | What a dependency upgrade actually changes |
 | **[pr-referee](https://github.com/hammasbuilds/pr-referee)** | Whether a diff changes behaviour, by running both sides |
@@ -264,4 +264,4 @@ PYTHONHASHSEED &middot; nondeterminism &middot; time freezing &middot; CI reliab
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT - see [LICENSE](https://github.com/hammasbuilds/flake-detective/blob/main/LICENSE).
