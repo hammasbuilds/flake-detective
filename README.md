@@ -124,6 +124,34 @@ nondeterministic test as `clock` — confidently, and wrongly.
 
 See [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/blob/main/docs/RESULTS.md) for the fixture, the full sweep and the real runs.
 
+
+### And 0 false positives across 660 real tests
+
+Five stable decoys in a fixture cannot answer the question that decides whether
+anyone keeps this installed: **how often does it flag a test that is not flaky?**
+So it was pointed at fifteen real suites — every deterministic Python suite on
+this machine — at 3 runs per arm:
+
+| | |
+|---|---:|
+| suites | 15 |
+| tests | **660** |
+| flagged as flaky | **0** |
+| always-failing (excluded, not flakes) | 0 |
+| wall time | 330s |
+
+`clcuv-surveillance` (101 tests), `primer-designer` (64), `urdu-nlp-toolkit` (57),
+`repo-surgeon` (47), `insurance-mlops` (44), `docstring-drift` (42),
+`perf-hunter` (42), `demand-forecast-platform` (41), `credit-risk-engine` (40),
+`pr-referee` (37), `blast-radius` (32), `model-serving-platform` (32),
+`suite-auditor` (32), `trace-to-patch` (30), `devign-leakage` (19).
+
+A detector that cries wolf gets uninstalled in a week, so this is the number to
+check before the detection rate. It is also the weaker of the two claims: these
+suites are expected to be deterministic, so the run confirms the tool is quiet
+on quiet code — it does not show it would stay quiet on a large, messy,
+genuinely flaky suite, which is where the pressure actually is.
+
 ## How it works
 
 **Four arms, one variable each.** The baseline repeats identical conditions; the other three
