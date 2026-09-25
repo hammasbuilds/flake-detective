@@ -49,6 +49,16 @@ def text(inv: Investigation) -> str:
         out.append(f"No flaky tests found across {per_arm} runs per arm.")
         out.append("A suite can still be flaky at a rate this many runs cannot see -")
         out.append("raise --runs to lower that bound.")
+        if per_arm:
+            # The bound, computed, rather than left for the reader to work out.
+            # A test that fails in half of all runs survives n of them undetected
+            # with probability 2^-n; one that fails in a tenth, 0.9^n. Both are
+            # worth stating, because "nothing found" means very different things
+            # at five runs and at fifty.
+            out.append("")
+            out.append(f"  what {per_arm} runs per arm can miss:")
+            for label, p in (("fails in half of all runs", 0.5), ("fails in one run in ten", 0.1)):
+                out.append(f"    a test that {label:<26} is missed {(1 - p) ** per_arm:>7.1%} of the time")
     else:
         counts = inv.by_cause()
         out.append(f"{len(inv.flakes)} flaky tests:")

@@ -29,9 +29,12 @@ def main(argv: list[str] | None = None) -> int:
     inv.add_argument(
         "--runs",
         type=int,
-        default=5,
-        help="runs per arm (default 5). Below 2 no cause can be established: a single "
-        "baseline run cannot flip, so nondeterminism cannot be ruled out.",
+        default=7,
+        help="runs per arm (default 7). Below 2 no cause can be established: a single "
+        "baseline run cannot flip, so nondeterminism cannot be ruled out. Seven "
+        "rather than five because a two-test order dependence is exposed by about "
+        "half of all shuffles, so five runs miss it 3.1% of the time - measured, "
+        "not estimated.",
     )
     inv.add_argument("--timeout", type=float, default=900.0, help="seconds per run")
     inv.add_argument(

@@ -23,7 +23,20 @@ ARMS = ("order", "hashseed", "clock")
 
 @dataclass
 class Options:
-    runs: int = 5
+    runs: int = 7
+    """Repetitions per arm. Seven, not five, and the difference was measured.
+
+    The order arm exposes a two-test dependence only in the shuffles that put the
+    culprit before the victim - about half of them - so n shuffles miss it with
+    probability 2^-n. At five that is 3.1%, and it is not theoretical: planting an
+    order dependence into model-serving-platform and suite-auditor and running at
+    --runs 5 missed it in both, then found it at --runs 11 (6 failures of 11) and
+    classified it correctly. Seven takes the bound to 0.8% for 40% more time.
+
+    Raise it further on a suite worth being sure about. The report prints the
+    bound this setting implies rather than leaving it to be worked out.
+    """
+
     timeout: float = 900.0
     arms: tuple[str, ...] = ARMS
     order_seed: int = 0

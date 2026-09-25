@@ -55,3 +55,34 @@ def test_json_round_trips(tmp_path):
     assert got == as_json(inv)
     assert got["by_cause"] == {"order": 1}
     assert got["flakes"][0]["suggested_fix"]
+
+
+def test_a_clean_report_states_what_it_could_have_missed():
+    """"No flaky tests found" is read as "this suite is clean", and it is not that.
+
+    Seven runs miss a test that fails half the time 0.8% of the time, and one that
+    fails a tenth of the time 47.8% of the time. The second number is the one that
+    matters and the one nobody works out for themselves, so it is printed.
+    """
+    from flake_detective.report import text
+    from flake_detective.types import Arm, Investigation
+
+    inv = Investigation(
+        arms=[Arm("baseline", "identical conditions, repeated", runs=7)], total_tests=40
+    )
+    out = text(inv)
+
+    assert "No flaky tests found" in out
+    assert "0.8%" in out, "the half-the-time bound, 0.5 ** 7"
+    assert "47.8%" in out, "the one-in-ten bound, 0.9 ** 7 - the one that should worry you"
+
+
+def test_the_missed_bound_follows_the_run_count():
+    from flake_detective.report import text
+    from flake_detective.types import Arm, Investigation
+
+    few = text(Investigation(arms=[Arm("baseline", "d", runs=2)], total_tests=1))
+    many = text(Investigation(arms=[Arm("baseline", "d", runs=20)], total_tests=1))
+
+    assert "25.0%" in few, "two runs miss a half-the-time flake a quarter of the time"
+    assert "0.0%" in many, "twenty runs make that bound vanish"
