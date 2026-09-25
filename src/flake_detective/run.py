@@ -367,3 +367,53 @@ def parallel_arm(
             ),
         )
     return arm
+
+
+def isolation_arm(
+    repo: Path,
+    target: str,
+    runs: int,
+    timeout: float,
+    epoch: float | None,
+    python: str = "",
+    tests: list[str] | None = None,
+) -> Arm:
+    """Every test run ALONE, in its own process.
+
+    The order arm shuffles the suite, which finds a test that breaks when its
+    neighbour runs first. It cannot find the opposite and equally real failure: a test
+    that only passes *because* of what ran before it. Such a test is green in every
+    ordering and red the moment somebody runs it on its own - `pytest path::name`,
+    which is what everybody does while debugging something else.
+
+    One "run" of this arm is one pass over the whole suite, one process per test, so a
+    pass costs n invocations rather than one. That is the reason it is opt-in and the
+    reason it is honest to say so: on a forty-test suite at three runs it is a hundred
+    and twenty pytest starts.
+
+    Read it against the baseline:
+
+        passes in the suite, fails alone   it depends on state another test creates
+        fails in the suite, passes alone   another test is leaking state into it
+                                           (the order arm sees this one too)
+    """
+    arm = Arm("isolation", "each test run alone in its own process")
+    if not tests:
+        return arm
+    for _ in range(runs):
+        failed: set[str] = set()
+        scored = False
+        for test_id in tests:
+            result = run_once(
+                repo, target, order=[test_id], hashseed=0, epoch=epoch,
+                timeout=timeout, python=python,
+            )
+            if result is None:
+                # One unscoreable test does not invalidate the pass, but a pass where
+                # nothing could be scored is not evidence and must not count as a run.
+                continue
+            scored = True
+            failed |= result
+        if scored:
+            _tally(arm, failed)
+    return arm

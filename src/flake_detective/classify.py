@@ -51,6 +51,7 @@ ARM_CAUSE = {
     "timezone": Cause.TIMEZONE,
     "locale": Cause.LOCALE,
     "parallel": Cause.PARALLEL,
+    "isolation": Cause.ISOLATION,
 }
 
 
@@ -135,6 +136,42 @@ def classify(arms: list[Arm], tests: list[str]) -> Investigation:
 
         culprits = [a for a in others if _flipped(a, test_id) or _differs(a, baseline, test_id)]
         if not culprits:
+            continue
+
+        # `order` and `isolation` are not independent perturbations - they are two
+        # views of one fact, that this test's result depends on other tests. Shuffling
+        # finds it when a shuffle happens to reverse the pair; running the test alone
+        # finds it every time. When only those two flip, UNKNOWN is a worse answer than
+        # the evidence supports, and the direction is readable from which way it fails:
+        #
+        #   fails alone, passes in the suite   it NEEDS what another test creates
+        #   passes alone, fails in some orders another test leaks state INTO it
+        names = {a.name for a in culprits}
+        isolation = by_name.get("isolation")
+        if len(culprits) > 1 and names <= {"order", "isolation"} and isolation is not None:
+            # Only one answer is reachable here, and working out why is what stopped a
+            # plausible second branch from being written.
+            #
+            # To get this far the baseline must be STABLE: a baseline that flips was
+            # already reported as nondeterminism, and one that fails every run was
+            # excluded as broken. A stable-passing baseline plus a flipping isolation
+            # arm can only mean the test fails when run alone. So the direction is
+            # fixed - it depends on state another test creates - and a branch for
+            # "passes alone, fails in some orders" would be unreachable code with a
+            # confident comment on it. That case arrives as `order` alone, through the
+            # single-culprit path below.
+            out.flakes.append(
+                Flake(
+                    test_id,
+                    Cause.ISOLATION,
+                    f"failed {isolation.failures.get(test_id, 0)} of {isolation.runs} "
+                    f"runs on its own and "
+                    f"{baseline.failures.get(test_id, 0) if baseline else 0} of "
+                    f"{baseline.runs if baseline else 0} as part of the suite: it "
+                    "depends on state another test creates",
+                    rates,
+                )
+            )
             continue
 
         if len(culprits) > 1:

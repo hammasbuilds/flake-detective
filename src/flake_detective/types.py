@@ -31,6 +31,7 @@ class Cause(StrEnum):
     TIMEZONE = "timezone"
     LOCALE = "locale"
     PARALLEL = "parallel"
+    ISOLATION = "isolation"
     NONDETERMINISM = "nondeterminism"
     UNKNOWN = "unknown"
 
@@ -46,6 +47,11 @@ FIX = {
     Cause.LOCALE: (
         "it depends on the locale; case-folding, sorting and number formatting all "
         "change with it - pass an explicit locale or compare case-sensitively"
+    ),
+    Cause.ISOLATION: (
+        "it only passes as part of the suite: another test creates state it needs. "
+        "Move that setup into a fixture, or the test breaks the day somebody runs it "
+        "on its own"
     ),
     Cause.PARALLEL: (
         "it fails when tests share a process pool - a file, port, database or temp "

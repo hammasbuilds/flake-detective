@@ -23,7 +23,7 @@ ARMS = ("order", "hashseed", "clock")
 # Available but not on by default. Each costs a full set of runs, and the three
 # above catch the causes that turn up most; these three catch the ones that turn up
 # worst. Opt in with --arms order,hashseed,clock,timezone,locale,parallel.
-EXTRA_ARMS = ("timezone", "locale", "parallel")
+EXTRA_ARMS = ("timezone", "locale", "parallel", "isolation")
 ALL_ARMS = ARMS + EXTRA_ARMS
 
 
@@ -149,6 +149,15 @@ def investigate(
             built.append(
                 arms_mod.parallel_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
             )
+    if "isolation" in opts.arms:
+        # One pass is one process per test, so this is the expensive arm and the cost
+        # is stated rather than discovered.
+        say(f"isolation: {opts.runs} passes, {len(tests)} processes each")
+        built.append(
+            arms_mod.isolation_arm(
+                repo, target, opts.runs, opts.timeout, epoch, opts.python, tests
+            )
+        )
     if "clock" in opts.arms:
         if not opts.freeze_clock:
             # Without freezing there is nothing to vary: the clock already varies in every

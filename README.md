@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python">
   <img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen" alt="zero dependencies">
   <img src="https://img.shields.io/badge/model-none%20required-success" alt="no model">
-  <img src="https://img.shields.io/badge/tests-67-brightgreen" alt="tests">
+  <img src="https://img.shields.io/badge/tests-70-brightgreen" alt="tests">
   <a href="https://github.com/hammasbuilds/flake-detective/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
 </p>
 
@@ -289,9 +289,11 @@ src/flake_detective/
   test, four to find one culprit among seven. Off by default because it costs runs, and the
   choice belongs to whoever is waiting. Without it the report names the victim, which is the
   innocent half of the pair.
-- **No isolation arm.** Running each test alone and comparing to the suite run would separate
-  state leaking *into* a test from state left *by* something else, without bisecting. It is
-  not implemented.
+- **The isolation arm costs one process per test.** It runs every test alone, which finds the
+  failure no reordering can: a test that only passes *because* of what ran before it is green
+  in every ordering and red the moment somebody runs `pytest path::name` while debugging
+  something else. One pass over a forty-test suite is forty pytest starts, so it is opt-in
+  and the cost is stated rather than discovered.
 
 ## Problems hit while building this
 
