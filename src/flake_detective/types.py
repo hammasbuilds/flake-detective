@@ -28,6 +28,9 @@ class Cause(StrEnum):
     ORDER = "order"
     HASH_SEED = "hash-seed"
     CLOCK = "clock"
+    TIMEZONE = "timezone"
+    LOCALE = "locale"
+    PARALLEL = "parallel"
     NONDETERMINISM = "nondeterminism"
     UNKNOWN = "unknown"
 
@@ -36,6 +39,18 @@ FIX = {
     Cause.ORDER: "a previous test leaves state behind; isolate it or reset in a fixture",
     Cause.HASH_SEED: "something iterates a dict or set and depends on the order; sort it",
     Cause.CLOCK: "it reads the wall clock; freeze or inject the time",
+    Cause.TIMEZONE: (
+        "it depends on the machine's timezone; use an explicit tz instead of a naive "
+        "datetime"
+    ),
+    Cause.LOCALE: (
+        "it depends on the locale; case-folding, sorting and number formatting all "
+        "change with it - pass an explicit locale or compare case-sensitively"
+    ),
+    Cause.PARALLEL: (
+        "it fails when tests share a process pool - a file, port, database or temp "
+        "path is fixed rather than per-worker"
+    ),
     Cause.NONDETERMINISM: "it flips with nothing changed - unseeded randomness, or a race",
     Cause.UNKNOWN: "it flipped, but no single perturbation explains it",
 }

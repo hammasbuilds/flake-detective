@@ -48,6 +48,9 @@ ARM_CAUSE = {
     "order": Cause.ORDER,
     "hashseed": Cause.HASH_SEED,
     "clock": Cause.CLOCK,
+    "timezone": Cause.TIMEZONE,
+    "locale": Cause.LOCALE,
+    "parallel": Cause.PARALLEL,
 }
 
 

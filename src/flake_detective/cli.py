@@ -9,7 +9,7 @@ from pathlib import Path
 from flake_detective import bench as bench_mod
 from flake_detective import fixture as fixture_mod
 from flake_detective import report as report_mod
-from flake_detective.detective import ARMS, Options, investigate
+from flake_detective.detective import ARMS, EXTRA_ARMS, Options, investigate
 
 
 def _say(msg: str) -> None:
@@ -40,7 +40,12 @@ def main(argv: list[str] | None = None) -> int:
     inv.add_argument(
         "--arms",
         default=",".join(ARMS),
-        help=f"which perturbations to try, comma separated (default {','.join(ARMS)})",
+        help=(
+            f"which perturbations to try, comma separated (default {','.join(ARMS)}). "
+            f"Also available: {','.join(EXTRA_ARMS)} - each costs a full set of runs, "
+            "and timezone and locale skip themselves on platforms where the "
+            "environment variable does not reach the interpreter."
+        ),
     )
     inv.add_argument(
         "--python",

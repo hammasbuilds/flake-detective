@@ -20,6 +20,12 @@ from flake_detective.types import Arm, Investigation
 
 ARMS = ("order", "hashseed", "clock")
 
+# Available but not on by default. Each costs a full set of runs, and the three
+# above catch the causes that turn up most; these three catch the ones that turn up
+# worst. Opt in with --arms order,hashseed,clock,timezone,locale,parallel.
+EXTRA_ARMS = ("timezone", "locale", "parallel")
+ALL_ARMS = ARMS + EXTRA_ARMS
+
 
 @dataclass
 class Options:
@@ -112,6 +118,37 @@ def investigate(
         built.append(
             arms_mod.hashseed_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
         )
+    if "timezone" in opts.arms:
+        if not arms_mod.tz_supported(opts.python):
+            # Not a platform guess: TZ only moves local time where time.tzset
+            # exists. On Windows the Olson names are ignored while TZ=UTC shifts by
+            # an hour, so an arm built on it can flip a test and then blame
+            # "timezone" for something that reproduces nowhere the user runs it.
+            say("timezone: skipped (TZ does not move local time on this platform)")
+        else:
+            say(f"timezone: {opts.runs} runs, TZ varied")
+            built.append(
+                arms_mod.timezone_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
+            )
+    if "locale" in opts.arms:
+        if not arms_mod.locale_supported(opts.python):
+            say("locale: skipped (LANG and LC_ALL do not reach the locale on this platform)")
+        else:
+            say(f"locale: {opts.runs} runs, LANG and LC_ALL varied")
+            built.append(
+                arms_mod.locale_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
+            )
+    if "parallel" in opts.arms:
+        if not arms_mod.xdist_available(repo, opts.python):
+            # Said, not skipped silently. Without xdist every run in the arm exits 4
+            # and scores as unscoreable, which reads in the report as an arm that
+            # found nothing rather than one that never ran.
+            say("parallel: skipped (pytest-xdist is not installed in the target's environment)")
+        else:
+            say(f"parallel: {opts.runs} runs across worker processes")
+            built.append(
+                arms_mod.parallel_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
+            )
     if "clock" in opts.arms:
         if not opts.freeze_clock:
             # Without freezing there is nothing to vary: the clock already varies in every
