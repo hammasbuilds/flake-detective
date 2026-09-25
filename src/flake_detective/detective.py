@@ -37,6 +37,15 @@ class Options:
     report says so, instead of announcing that nothing is flaky.
     """
 
+    localise: bool = False
+    """After classifying, bisect each order dependence to name the culprit.
+
+    Off by default because it costs runs: about log2(n) pytest invocations per
+    order-dependent test, plus two checks. On a suite where the whole run takes a
+    minute that is cheap; on one that takes twenty it is not, and the choice
+    belongs to whoever is waiting.
+    """
+
     freeze_clock: bool = True
     """Pin the wall clock in every arm except the clock arm, which varies it.
 
@@ -100,5 +109,17 @@ def investigate(
             built.append(arms_mod.clock_arm(repo, target, opts.runs, opts.timeout, opts.python))
 
     inv = classify(built, tests)
+
+    if opts.localise:
+        from flake_detective.localise import localise as _localise
+        from flake_detective.types import Cause
+
+        order_flakes = [f for f in inv.flakes if f.cause is Cause.ORDER]
+        for flake in order_flakes:
+            say(f"localising: bisecting for what {flake.test_id} trips over")
+            found = _localise(repo, flake.test_id, tests, opts.timeout, opts.python)
+            flake.culprits = found.culprits
+            say(f"  {found.describe()}  ({found.probes} runs)")
+
     inv.seconds = time.time() - started
     return inv

@@ -56,6 +56,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="exit 1 if any flaky test is found (for CI)",
     )
+    inv.add_argument(
+        "--localise",
+        action="store_true",
+        help="bisect each order dependence to name the earlier test that causes it "
+        "(costs about log2(n) extra runs per order-dependent test)",
+    )
     inv.add_argument("--quiet", action="store_true")
 
     b = sub.add_parser("bench", help="score the classifier on a suite with known causes")
@@ -107,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             arms=tuple(x.strip() for x in a.arms.split(",") if x.strip()),
             python=a.python,
             freeze_clock=not a.no_freeze_clock,
+            localise=a.localise,
         ),
         progress=None if a.quiet else _say,
     )

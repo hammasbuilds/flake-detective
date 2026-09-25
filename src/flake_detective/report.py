@@ -67,6 +67,18 @@ def text(inv: Investigation) -> str:
             row += "".join(f"{f.rates.get(n, 0.0):>9.1f}" for n in names)
             out.append(row)
             out.append(f"    {f.cause.value.upper()}: {f.evidence}")
+            if f.culprits:
+                # The cause names the victim, which is the innocent half of the
+                # pair. This is the half worth opening.
+                if len(f.culprits) == 1:
+                    out.append(f"    caused by: {f.culprits[0]}")
+                else:
+                    out.append(
+                        f"    caused by these {len(f.culprits)} together "
+                        f"(no single one was enough):"
+                    )
+                    for c in f.culprits:
+                        out.append(f"      {c}")
             out.append(f"    fix: {f.fix}")
             out.append("")
 

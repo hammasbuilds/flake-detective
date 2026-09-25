@@ -69,18 +69,28 @@ class Flake:
 
     rates: dict[str, float] = field(default_factory=dict)
 
+    culprits: list[str] = field(default_factory=list)
+    """For an order dependence: the earlier test(s) that leave the state behind.
+
+    Empty unless `--localise` ran and reproduced it. The cause names the victim,
+    which is the innocent half of the pair; this names the other half.
+    """
+
     @property
     def fix(self) -> str:
         return FIX[self.cause]
 
     def as_row(self) -> dict:
-        return {
+        row = {
             "test": self.test_id,
             "cause": self.cause.value,
             "evidence": self.evidence,
             "rates": {k: round(v, 3) for k, v in self.rates.items()},
             "suggested_fix": self.fix,
         }
+        if self.culprits:
+            row["culprits"] = self.culprits
+        return row
 
 
 @dataclass
