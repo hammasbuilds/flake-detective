@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python">
   <img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen" alt="zero dependencies">
   <img src="https://img.shields.io/badge/model-none%20required-success" alt="no model">
-  <img src="https://img.shields.io/badge/tests-55-brightgreen" alt="tests">
+  <img src="https://img.shields.io/badge/tests-67-brightgreen" alt="tests">
   <a href="https://github.com/hammasbuilds/flake-detective/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
 </p>
 
@@ -147,10 +147,46 @@ this machine — at 3 runs per arm:
 `suite-auditor` (32), `trace-to-patch` (30), `devign-leakage` (19).
 
 A detector that cries wolf gets uninstalled in a week, so this is the number to
-check before the detection rate. It is also the weaker of the two claims: these
-suites are expected to be deterministic, so the run confirms the tool is quiet
-on quiet code — it does not show it would stay quiet on a large, messy,
-genuinely flaky suite, which is where the pressure actually is.
+check before the detection rate. On its own it only shows the tool is quiet on
+quiet code; the section below is the other half.
+
+### And 47 of 48 flakes found, planted in other people's suites
+
+The fixture measures attribution and cannot measure detection, because the fixture's
+author and the classifier's author are the same person. So the flake is planted
+instead, in a suite somebody else wrote: the injected test's cause is known exactly,
+and the thirty to ninety real tests around it — with their fixtures, their conftest,
+their imports — are the noise a purpose-built fixture cannot reproduce.
+
+`python scripts/inject_and_score.py <repo> ...`, four causes into twelve repositories:
+
+| | |
+|---|---:|
+| plants scored | **48** across 12 repositories |
+| detected | **47 / 48 — 98%** |
+| cause named correctly | **46 / 48 — 96%** |
+| findings that were **not** the planted test | **0** |
+
+| cause | correct |
+|---|---:|
+| hash-seed | 12 / 12 |
+| clock | 12 / 12 |
+| order | 11 / 12 |
+| nondeterminism | 11 / 12 |
+
+**The two misses are worth more than the 46.** The order miss is the run count, not
+the classifier: a two-test order dependence is only exposed by shuffles that put the
+culprit before the victim, so five shuffles miss it 3.1% of the time — which is why
+the default is now seven. The nondeterminism miss came back as `UNKNOWN` rather than
+wrong: two arms disagreed, and reporting the first match would have been a guess.
+
+**What this does not measure** is whether these four causes are the ones that matter
+in the wild. The obvious way to find out is to mine real history for commits that
+fixed a flaky test — which was tried first and does not scale here: searching 8,679
+commits across flask and requests for `\bflaky\b|deflake|intermittent|race
+condition|heisenbug`, keeping only those touching a test file, yields **one** usable
+case. A looser first pattern appeared to find dozens, every one of them `pyflakes`
+and `flaskext` matching `flak`.
 
 ## How it works
 
@@ -224,9 +260,17 @@ src/flake_detective/
   That means *nothing was seen in 20 runs each*, not that nothing is there. A test failing
   one run in fifty is almost certainly still in those suites. The report says which claim it
   is making.
-- **It does not catch parallelism or environment.** There is no `-n` arm and no arm for
-  locale, filesystem or available ports. Each would need its own control, and an arm that
-  changes two things at once cannot attribute anything.
+- **The environment arms do nothing on Windows, and say so.** `timezone`, `locale` and
+  `parallel` exist now, off by default. Two of the three cannot work on every platform, and
+  each checks before running: `TZ` only moves local time where `time.tzset` exists, and
+  `LC_ALL` never reaches `locale.getlocale()` on Windows. Measured there, `TZ=Pacific/Kiritimati`
+  and `TZ=America/New_York` return the *same* local time while `TZ=UTC` shifts by an hour — so
+  an arm on top of that could flip a test and then blame the timezone for something that
+  reproduces nowhere. An arm that cannot vary what it claims to vary is worse than an absent
+  one: every run is a second baseline, it finds nothing, and the report reads as though the
+  question was asked and answered.
+- **Still no arm for filesystem ordering.** `os.listdir` order, case-insensitive paths and
+  inode ordering are all real sources of flakiness and none of them is varied here.
 - **`UNKNOWN` is common and stays that way.** Two arms disagreeing means no single cause was
   established. Reporting the first match would be a guess, and a wrong cause sends somebody
   to the wrong file.
@@ -240,8 +284,14 @@ src/flake_detective/
 - **Durations measured with `time.time()` read as zero.** That is the freeze working as
   intended. A test asserting an operation is *under* a budget still passes; one asserting it
   took measurable time will be flagged as clock-dependent — correctly, since it is.
-- **Order dependence is found, not localised.** It reports that a test fails in some orders.
-  It does not bisect to say *which* earlier test leaves the state behind.
+- **Order dependence is localised only when you ask.** `--localise` bisects to name the
+  earlier test that leaves the state behind — about log2(n) extra runs per order-dependent
+  test, four to find one culprit among seven. Off by default because it costs runs, and the
+  choice belongs to whoever is waiting. Without it the report names the victim, which is the
+  innocent half of the pair.
+- **No isolation arm.** Running each test alone and comparing to the suite run would separate
+  state leaking *into* a test from state left *by* something else, without bisecting. It is
+  not implemented.
 
 ## Problems hit while building this
 
