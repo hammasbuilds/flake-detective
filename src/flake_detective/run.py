@@ -25,6 +25,10 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from flake_detective import freeze
@@ -37,48 +41,205 @@ from flake_detective.types import Arm
 # string, which would merge them and hide a flake in whichever one flipped.
 _SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(.+?)(?:\s+-\s.*)?$", re.MULTILINE)
 
+# Passed to every pytest invocation, collection included.
+#
+# `no:randomly` because pytest-randomly, where installed, shuffles the order and reseeds
+# `random` on every run - including the baseline. The control would then vary the very
+# thing the order arm varies, and every order-dependent test in the suite would be filed
+# as nondeterminism. Blocking a plugin that is not installed is a no-op.
+_COMMON = ["-p", "no:cacheprovider", "-p", "no:randomly"]
+
+# Past this many characters of node ids, the order is handed over in a file instead of
+# on the command line. Windows refuses a command line over 32,767 characters, and a
+# shuffled suite of a thousand tests passes that easily; the run would fail to start and
+# the whole order arm would score nothing.
+MAX_ARGV_CHARS = 20_000
+
+Tick = Callable[[], None]
+
 
 def _env(hashseed: int, epoch: float | None) -> dict[str, str]:
     env = dict(os.environ)
     # PYTHONHASHSEED has to be set in the environment: by the time the interpreter is
     # running it is far too late to change how strings hash.
     env["PYTHONHASHSEED"] = str(hashseed)
+    # Output is decoded as UTF-8 here, so it has to be written as UTF-8 there. Left to
+    # the locale, a Windows console writes cp1252 and a non-ASCII test id comes back as
+    # a different string from the one collection returned.
+    env["PYTHONIOENCODING"] = "utf-8"
+    d = str(freeze.plugin_dir())
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = d + (os.pathsep + existing if existing else "")
     if epoch is not None:
         env[freeze.ENV_VAR] = repr(epoch)
-        d = str(freeze.plugin_dir())
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = d + (os.pathsep + existing if existing else "")
     else:
         env.pop(freeze.ENV_VAR, None)
+    env.pop(freeze.ORDER_ENV_VAR, None)
     return env
 
 
-def collect(repo: Path, target: str = "", timeout: float = 300.0, python: str = "") -> list[str]:
-    """Every test id the suite contains, without running any of them."""
-    cmd = [
-        python or sys.executable,
-        "-m",
-        "pytest",
-        "--collect-only",
-        "-q",
-        "--no-header",
-        "-p",
-        "no:cacheprovider",
-    ]
-    if target:
-        cmd.append(target)
+def _tail(text: str, lines: int = 12) -> str:
+    kept = [ln for ln in (text or "").splitlines() if ln.strip()]
+    return "\n".join(kept[-lines:])
+
+
+def _spawn(
+    cmd: list[str], repo: Path, timeout: float, env: dict[str, str] | None = None
+) -> tuple[int | None, str]:
+    """Run a command. Returns (returncode, or None if it never finished; its output)."""
     try:
         proc = subprocess.run(
-            cmd, cwd=repo, capture_output=True, text=True, timeout=timeout, check=False
+            cmd,
+            cwd=repo,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=env,
+            check=False,
         )
-    except (subprocess.TimeoutExpired, OSError):
-        return []
-    out: list[str] = []
-    for line in (proc.stdout or "").splitlines():
-        line = line.strip()
-        if "::" in line and not line.startswith(("=", "-", "ERROR", "FAILED")):
-            out.append(line)
-    return out
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {timeout:g}s (raise --timeout if the suite is slow)"
+    except OSError as e:
+        return None, f"could not start {cmd[0]}: {e}"
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def pytest_problem(python: str = "", repo: Path | None = None) -> str:
+    """Why pytest cannot run in this interpreter, or "" if it can.
+
+    Checked before anything else. Without it, a missing pytest makes every run exit 1
+    with "No module named pytest", which scores as a run where nothing failed - so the
+    report used to announce no flaky tests, and the benchmark 0 of 4 detected, both
+    with exit status 0.
+    """
+    exe = python or sys.executable
+    code, out = _spawn(
+        [exe, "-c", "import pytest; print(pytest.__version__)"],
+        repo or Path.cwd(),
+        timeout=120,
+    )
+    if code == 0:
+        return ""
+    reason = _tail(out, 1) or f"exit status {code}"
+    shown = f'"{exe}"' if " " in exe else exe
+    return (
+        f"pytest is not importable by {exe}\n"
+        f"  ({reason})\n"
+        "\n"
+        "flake-detective does not bundle pytest: it runs your suite with the pytest\n"
+        "installed in the interpreter your tests use. Either:\n"
+        "  - point --python at that interpreter, e.g.\n"
+        "      --python .venv/bin/python            (Linux, macOS)\n"
+        "      --python .venv\\Scripts\\python.exe    (Windows)\n"
+        f"  - or install pytest into this one:  {shown} -m pip install pytest"
+    )
+
+
+@dataclass
+class Collection:
+    tests: list[str]
+    returncode: int | None
+    output: str
+
+    @property
+    def error(self) -> str:
+        """Why collection did not produce a usable list of tests, or ""."""
+        if self.returncode == 0 and self.tests:
+            return ""
+        if self.returncode is None:
+            return "pytest could not collect the suite: " + self.output
+        what = {
+            0: "pytest found no tests",
+            1: "pytest reported failures while collecting",
+            2: "pytest hit errors while collecting (an import failed, or a syntax error)",
+            3: "pytest was interrupted while collecting",
+            4: "pytest rejected the command line (a TARGET that does not exist, or an "
+            "option in the project's addopts that needs a plugin not installed here)",
+            5: "pytest found no tests",
+        }.get(self.returncode, f"pytest exited with status {self.returncode}")
+        tail = _tail(self.output)
+        if not tail:
+            return what
+        return what + ":\n" + "\n".join("    " + ln for ln in tail.splitlines())
+
+
+def collect_detailed(
+    repo: Path, target: str = "", timeout: float = 300.0, python: str = ""
+) -> Collection:
+    """Every test id the suite contains, without running any of them - and if none, why."""
+    cmd = [python or sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header"]
+    cmd += _COMMON
+    if target:
+        cmd.append(target)
+    code, out = _spawn(cmd, repo, timeout, env=_env(0, None))
+    tests: list[str] = []
+    if code is not None:
+        for line in out.splitlines():
+            line = line.strip()
+            if "::" in line and not line.startswith(("=", "-", "ERROR", "FAILED")):
+                tests.append(line)
+    return Collection(tests, code, out)
+
+
+def collect(repo: Path, target: str = "", timeout: float = 300.0, python: str = "") -> list[str]:
+    """Every test id the suite contains. Empty if collection failed for any reason."""
+    c = collect_detailed(repo, target, timeout, python)
+    return [] if c.error else c.tests
+
+
+def run_once_detailed(
+    repo: Path,
+    target: str = "",
+    order: list[str] | None = None,
+    hashseed: int = 0,
+    epoch: float | None = None,
+    timeout: float = 900.0,
+    python: str = "",
+    extra_env: dict[str, str] | None = None,
+    extra_args: list[str] | None = None,
+) -> tuple[set[str] | None, str]:
+    """(the failed test ids, or None if the run could not be scored; and why not)."""
+    cmd = [python or sys.executable, "-m", "pytest", "-q", "--no-header", "--tb=no", "-rf"]
+    cmd += _COMMON
+    if epoch is not None:
+        cmd += ["-p", freeze.PLUGIN_NAME]
+    if extra_args:
+        cmd += extra_args
+
+    env = {**_env(hashseed, epoch), **(extra_env or {})}
+    order_file = None
+    if order and sum(len(t) + 1 for t in order) > MAX_ARGV_CHARS:
+        # Too long for a command line: collect as usual and let a plugin put the
+        # items in this order. Same tests, same order, no argv limit.
+        fd, order_file = tempfile.mkstemp(prefix="flake-order-", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(order))
+        env[freeze.ORDER_ENV_VAR] = order_file
+        cmd += ["-p", freeze.ORDER_PLUGIN_NAME]
+        if target:
+            cmd.append(target)
+    else:
+        cmd.extend(order if order else ([target] if target else []))
+
+    try:
+        code, out = _spawn(cmd, repo, timeout, env=env)
+    finally:
+        if order_file:
+            try:
+                os.unlink(order_file)
+            except OSError:
+                pass
+
+    if code is None:
+        return None, out
+    if code == 5:
+        return None, "pytest collected nothing (exit status 5)"
+    if code not in (0, 1):
+        # 2 is an internal error, 3 an interrupt: a run that fell over is not evidence
+        # that every test in it failed.
+        return None, f"pytest exited with status {code}:\n{_tail(out)}"
+    return set(_SUMMARY.findall(out)), ""
 
 
 def run_once(
@@ -93,44 +254,9 @@ def run_once(
     extra_args: list[str] | None = None,
 ) -> set[str] | None:
     """The set of test ids that failed. None if the run could not be scored at all."""
-    cmd = [
-        python or sys.executable,
-        "-m",
-        "pytest",
-        "-q",
-        "--no-header",
-        "-p",
-        "no:cacheprovider",
-        "--tb=no",
-        "-rf",
-    ]
-    if epoch is not None:
-        cmd += ["-p", freeze.PLUGIN_NAME]
-    if extra_args:
-        cmd += extra_args
-    cmd.extend(order if order else ([target] if target else []))
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env={**_env(hashseed, epoch), **(extra_env or {})},
-            check=False,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-
-    out = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode == 5:  # nothing collected
-        return None
-    if proc.returncode not in (0, 1):
-        # 2 is an internal error, 3 an interrupt: a run that fell over is not evidence
-        # that every test in it failed.
-        return None
-    return set(_SUMMARY.findall(out))
+    return run_once_detailed(
+        repo, target, order, hashseed, epoch, timeout, python, extra_env, extra_args
+    )[0]
 
 
 def _tally(arm: Arm, failed: set[str] | None) -> None:
@@ -141,14 +267,71 @@ def _tally(arm: Arm, failed: set[str] | None) -> None:
         arm.failures[t] = arm.failures.get(t, 0) + 1
 
 
+def execute(
+    arm: Arm,
+    runs: list[list[dict]],
+    jobs: int = 1,
+    tick: Tick | None = None,
+) -> Arm:
+    """Score an arm. Each run is one or more `run_once` calls whose failures are unioned.
+
+    Almost every run is a single pytest invocation; an isolation pass is one per test.
+    The invocations are independent processes, so with `jobs` above one they go
+    through a pool - which is sound only for a suite whose tests do not share a fixed
+    file, port or database across processes. That is the caller's call, and it is off
+    by default.
+    """
+    units = [(i, kw) for i, calls in enumerate(runs) for kw in calls]
+    results: dict[int, list[set[str] | None]] = {i: [] for i in range(len(runs))}
+
+    def one(unit: tuple[int, dict]) -> tuple[int, tuple[set[str] | None, str]]:
+        i, kw = unit
+        return i, run_once_detailed(**kw)
+
+    def record(i: int, res: tuple[set[str] | None, str]) -> None:
+        failed, why = res
+        results[i].append(failed)
+        if failed is None and why and not arm.error:
+            arm.error = why
+        if tick:
+            tick()
+
+    if jobs <= 1 or len(units) <= 1:
+        for u in units:
+            record(*one(u))
+    else:
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            for fut in as_completed([pool.submit(one, u) for u in units]):
+                record(*fut.result())
+
+    arm.attempted += len(runs)
+    for i in range(len(runs)):
+        scored = [r for r in results[i] if r is not None]
+        # One unscoreable test does not invalidate an isolation pass, but a pass where
+        # nothing could be scored is not evidence and must not count as a run.
+        if scored:
+            _tally(arm, set().union(*scored))
+    return arm
+
+
+def _call(repo: Path, target: str, timeout: float, python: str, **kw) -> list[dict]:
+    return [dict(repo=repo, target=target, timeout=timeout, python=python, **kw)]
+
+
 def baseline_arm(
-    repo: Path, target: str, runs: int, timeout: float, epoch: float | None, python: str = ""
+    repo: Path,
+    target: str,
+    runs: int,
+    timeout: float,
+    epoch: float | None,
+    python: str = "",
+    jobs: int = 1,
+    tick: Tick | None = None,
 ) -> Arm:
     """Identical conditions, repeated. Anything that flips here is nondeterministic."""
     arm = Arm("baseline", "identical conditions, repeated")
-    for _ in range(runs):
-        _tally(arm, run_once(repo, target, hashseed=0, epoch=epoch, timeout=timeout, python=python))
-    return arm
+    plan = [_call(repo, target, timeout, python, hashseed=0, epoch=epoch) for _ in range(runs)]
+    return execute(arm, plan, jobs, tick)
 
 
 def order_arm(
@@ -160,42 +343,45 @@ def order_arm(
     epoch: float | None,
     seed: int = 0,
     python: str = "",
+    jobs: int = 1,
+    tick: Tick | None = None,
 ) -> Arm:
     """The same tests, shuffled. Flips here mean one test leaves state for another."""
     arm = Arm("order", "the same tests, shuffled")
     rnd = random.Random(seed)
+    plan = []
     for _ in range(runs):
         shuffled = list(tests)
         rnd.shuffle(shuffled)
-        _tally(
-            arm,
-            run_once(
-                repo,
-                target,
-                order=shuffled,
-                hashseed=0,
-                epoch=epoch,
-                timeout=timeout,
-                python=python,
-            ),
-        )
-    return arm
+        plan.append(_call(repo, target, timeout, python, order=shuffled, hashseed=0, epoch=epoch))
+    return execute(arm, plan, jobs, tick)
 
 
 def hashseed_arm(
-    repo: Path, target: str, runs: int, timeout: float, epoch: float | None, python: str = ""
+    repo: Path,
+    target: str,
+    runs: int,
+    timeout: float,
+    epoch: float | None,
+    python: str = "",
+    jobs: int = 1,
+    tick: Tick | None = None,
 ) -> Arm:
     """A different PYTHONHASHSEED each run, everything else identical."""
     arm = Arm("hashseed", "PYTHONHASHSEED varied")
-    for i in range(runs):
-        _tally(
-            arm,
-            run_once(repo, target, hashseed=i + 1, epoch=epoch, timeout=timeout, python=python),
-        )
-    return arm
+    plan = [_call(repo, target, timeout, python, hashseed=i + 1, epoch=epoch) for i in range(runs)]
+    return execute(arm, plan, jobs, tick)
 
 
-def clock_arm(repo: Path, target: str, runs: int, timeout: float, python: str = "") -> Arm:
+def clock_arm(
+    repo: Path,
+    target: str,
+    runs: int,
+    timeout: float,
+    python: str = "",
+    jobs: int = 1,
+    tick: Tick | None = None,
+) -> Arm:
     """The wall clock frozen at a different instant each run.
 
     Not "wait a second and run again" - that was the first attempt, and it could not
@@ -203,10 +389,18 @@ def clock_arm(repo: Path, target: str, runs: int, timeout: float, python: str = 
     also takes time to run. Freezing makes the date a controlled variable like any other.
     """
     arm = Arm("clock", "the wall clock frozen at a different date each run")
-    for i in range(runs):
-        epoch = freeze.CLOCK_EPOCHS[i % len(freeze.CLOCK_EPOCHS)]
-        _tally(arm, run_once(repo, target, hashseed=0, epoch=epoch, timeout=timeout, python=python))
-    return arm
+    plan = [
+        _call(
+            repo,
+            target,
+            timeout,
+            python,
+            hashseed=0,
+            epoch=freeze.CLOCK_EPOCHS[i % len(freeze.CLOCK_EPOCHS)],
+        )
+        for i in range(runs)
+    ]
+    return execute(arm, plan, jobs, tick)
 
 
 # Timezones chosen to disagree as much as possible about what "today" is: two of
@@ -238,8 +432,14 @@ def tz_supported(python: str = "") -> bool:
     """
     try:
         proc = subprocess.run(
-            [python or sys.executable, "-c", "import time, sys; sys.exit(0 if hasattr(time, 'tzset') else 1)"],
-            capture_output=True, timeout=60, check=False,
+            [
+                python or sys.executable,
+                "-c",
+                "import time, sys; sys.exit(0 if hasattr(time, 'tzset') else 1)",
+            ],
+            capture_output=True,
+            timeout=60,
+            check=False,
         )
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -263,8 +463,12 @@ def locale_supported(python: str = "") -> bool:
         try:
             proc = subprocess.run(
                 [python or sys.executable, "-c", probe],
-                capture_output=True, encoding="utf-8", errors="replace",
-                timeout=60, check=False, env=env,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                check=False,
+                env=env,
             )
         except (subprocess.TimeoutExpired, OSError):
             return False
@@ -279,6 +483,8 @@ def timezone_arm(
     timeout: float,
     epoch: float | None,
     python: str = "",
+    jobs: int = 1,
+    tick: Tick | None = None,
 ) -> Arm:
     """The same tests in a different timezone each run.
 
@@ -287,15 +493,19 @@ def timezone_arm(
     naive datetime. Varying both at once would leave nothing to attribute to.
     """
     arm = Arm("timezone", "the machine's timezone varied")
-    for i in range(runs):
-        _tally(
-            arm,
-            run_once(
-                repo, target, hashseed=0, epoch=epoch, timeout=timeout, python=python,
-                extra_env={"TZ": TIMEZONES[i % len(TIMEZONES)]},
-            ),
+    plan = [
+        _call(
+            repo,
+            target,
+            timeout,
+            python,
+            hashseed=0,
+            epoch=epoch,
+            extra_env={"TZ": TIMEZONES[i % len(TIMEZONES)]},
         )
-    return arm
+        for i in range(runs)
+    ]
+    return execute(arm, plan, jobs, tick)
 
 
 def locale_arm(
@@ -305,19 +515,26 @@ def locale_arm(
     timeout: float,
     epoch: float | None,
     python: str = "",
+    jobs: int = 1,
+    tick: Tick | None = None,
 ) -> Arm:
     """The same tests under a different locale each run."""
     arm = Arm("locale", "the locale varied")
+    plan = []
     for i in range(runs):
         name = LOCALES[i % len(LOCALES)]
-        _tally(
-            arm,
-            run_once(
-                repo, target, hashseed=0, epoch=epoch, timeout=timeout, python=python,
+        plan.append(
+            _call(
+                repo,
+                target,
+                timeout,
+                python,
+                hashseed=0,
+                epoch=epoch,
                 extra_env={"LANG": name, "LC_ALL": name},
-            ),
+            )
         )
-    return arm
+    return execute(arm, plan, jobs, tick)
 
 
 def xdist_available(repo: Path, python: str = "") -> bool:
@@ -330,7 +547,10 @@ def xdist_available(repo: Path, python: str = "") -> bool:
     try:
         proc = subprocess.run(
             [python or sys.executable, "-c", "import xdist"],
-            cwd=repo, capture_output=True, timeout=60, check=False,
+            cwd=repo,
+            capture_output=True,
+            timeout=60,
+            check=False,
         )
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -345,6 +565,8 @@ def parallel_arm(
     epoch: float | None,
     python: str = "",
     workers: int = 4,
+    jobs: int = 1,
+    tick: Tick | None = None,
 ) -> Arm:
     """The same tests spread across worker processes.
 
@@ -358,15 +580,19 @@ def parallel_arm(
     reported as UNKNOWN rather than credited to parallelism.
     """
     arm = Arm("parallel", f"the suite spread across {workers} worker processes")
-    for _ in range(runs):
-        _tally(
-            arm,
-            run_once(
-                repo, target, hashseed=0, epoch=epoch, timeout=timeout, python=python,
-                extra_args=["-n", str(workers)],
-            ),
+    plan = [
+        _call(
+            repo,
+            target,
+            timeout,
+            python,
+            hashseed=0,
+            epoch=epoch,
+            extra_args=["-n", str(workers)],
         )
-    return arm
+        for _ in range(runs)
+    ]
+    return execute(arm, plan, jobs, tick)
 
 
 def isolation_arm(
@@ -377,6 +603,8 @@ def isolation_arm(
     epoch: float | None,
     python: str = "",
     tests: list[str] | None = None,
+    jobs: int = 1,
+    tick: Tick | None = None,
 ) -> Arm:
     """Every test run ALONE, in its own process.
 
@@ -400,20 +628,8 @@ def isolation_arm(
     arm = Arm("isolation", "each test run alone in its own process")
     if not tests:
         return arm
-    for _ in range(runs):
-        failed: set[str] = set()
-        scored = False
-        for test_id in tests:
-            result = run_once(
-                repo, target, order=[test_id], hashseed=0, epoch=epoch,
-                timeout=timeout, python=python,
-            )
-            if result is None:
-                # One unscoreable test does not invalidate the pass, but a pass where
-                # nothing could be scored is not evidence and must not count as a run.
-                continue
-            scored = True
-            failed |= result
-        if scored:
-            _tally(arm, failed)
-    return arm
+    plan = [
+        [_call(repo, target, timeout, python, order=[t], hashseed=0, epoch=epoch)[0] for t in tests]
+        for _ in range(runs)
+    ]
+    return execute(arm, plan, jobs, tick)

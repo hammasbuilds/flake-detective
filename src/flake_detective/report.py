@@ -30,6 +30,13 @@ def text(inv: Investigation) -> str:
     out.append("FLAKE DETECTIVE")
     out.append(w)
 
+    if inv.problem:
+        out.append("")
+        out.append("NOTHING WAS EXAMINED - this is an error, not a clean result.")
+        out.append("")
+        out.extend(inv.problem.splitlines())
+        return "\n".join(out)
+
     if not inv.total_tests:
         out.append("")
         out.append("No tests were collected. This is not a clean bill of health -")
@@ -41,12 +48,33 @@ def text(inv: Investigation) -> str:
 
     names = [a.name for a in inv.arms]
     for a in inv.arms:
-        out.append(f"  {a.name:<10} {a.runs} runs   {a.description}")
+        runs = f"{a.runs} runs" if not a.unscored else f"{a.runs} of {a.attempted} runs"
+        out.append(f"  {a.name:<10} {runs:<14} {a.description}")
     out.append("")
 
+    if inv.incomplete:
+        out.append("INCOMPLETE: these arms scored no runs at all, so they examined nothing:")
+        for a in inv.arms:
+            if a.name in inv.incomplete:
+                out.append(f"  {a.name}:")
+                out.extend("    " + ln for ln in (a.error or "no reason recorded").splitlines())
+        out.append("")
+    partial = [a for a in inv.arms if a.unscored and a.runs]
+    if partial:
+        out.append("Some runs could not be scored (pytest crashed, timed out or collected")
+        out.append("nothing) and were left out of the rates above:")
+        for a in partial:
+            first = (a.error or "").splitlines()[:1]
+            reason = f" - {first[0]}" if first else ""
+            out.append(f"  {a.name}: {a.unscored} of {a.attempted}{reason}")
+        out.append("")
+
     if not inv.flakes:
-        per_arm = inv.arms[0].runs if inv.arms else 0
-        out.append(f"No flaky tests found across {per_arm} runs per arm.")
+        per_arm = min((a.runs for a in inv.arms if a.runs), default=0)
+        if inv.incomplete:
+            out.append(f"No flaky tests found by the arms that ran ({per_arm}+ runs each).")
+        else:
+            out.append(f"No flaky tests found across {per_arm} runs per arm.")
         out.append("A suite can still be flaky at a rate this many runs cannot see -")
         out.append("raise --runs to lower that bound.")
         if per_arm:
@@ -58,7 +86,9 @@ def text(inv: Investigation) -> str:
             out.append("")
             out.append(f"  what {per_arm} runs per arm can miss:")
             for label, p in (("fails in half of all runs", 0.5), ("fails in one run in ten", 0.1)):
-                out.append(f"    a test that {label:<26} is missed {(1 - p) ** per_arm:>7.1%} of the time")
+                out.append(
+                    f"    a test that {label:<26} is missed {(1 - p) ** per_arm:>7.1%} of the time"
+                )
     else:
         counts = inv.by_cause()
         out.append(f"{len(inv.flakes)} flaky tests:")
@@ -107,10 +137,22 @@ def as_json(inv: Investigation) -> dict:
     return {
         "total_tests": inv.total_tests,
         "seconds": round(inv.seconds, 1),
-        "arms": [{"name": a.name, "description": a.description, "runs": a.runs} for a in inv.arms],
+        "arms": [
+            {
+                "name": a.name,
+                "description": a.description,
+                "runs": a.runs,
+                "attempted": a.attempted,
+                **({"error": a.error} if a.error else {}),
+            }
+            for a in inv.arms
+        ],
         "by_cause": inv.by_cause(),
         "flakes": [f.as_row() for f in inv.flakes],
         "always_failed": inv.always_failed,
+        "ok": inv.ok,
+        "problem": inv.problem or None,
+        "incomplete_arms": inv.incomplete,
     }
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+
 def _suite(root: Path, extra: str = "") -> Path:
     """A real little suite: one culprit, one victim, and several innocents."""
     tests = root / "tests"

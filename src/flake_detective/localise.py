@@ -71,9 +71,18 @@ class Localisation:
         )
 
 
-def _fails(repo: Path, prefix: list[str], victim: str, timeout: float, python: str) -> bool | None:
+def _fails(
+    repo: Path,
+    prefix: list[str],
+    victim: str,
+    timeout: float,
+    python: str,
+    epoch: float | None = None,
+) -> bool | None:
     """Run `prefix` then `victim`. True if the victim failed, None if unscoreable."""
-    failed = run_once(repo, order=[*prefix, victim], timeout=timeout, python=python)
+    failed = run_once(
+        repo, order=[*prefix, victim], hashseed=0, epoch=epoch, timeout=timeout, python=python
+    )
     if failed is None:
         return None
     return victim in failed
@@ -86,13 +95,18 @@ def localise(
     timeout: float = 900.0,
     python: str = "",
     max_probes: int = 24,
+    epoch: float | None = None,
 ) -> Localisation:
-    """Find the smallest set of earlier tests that makes `victim` fail."""
+    """Find the smallest set of earlier tests that makes `victim` fail.
+
+    `epoch` pins the clock as the other arms do, so the bisection runs under the
+    same conditions the order dependence was observed in.
+    """
     out = Localisation(victim=victim)
 
     # Alone first. A test that fails with nothing in front of it is broken, and
     # bisecting a broken test would "find" whichever half was tried first.
-    alone = _fails(repo, [], victim, timeout, python)
+    alone = _fails(repo, [], victim, timeout, python, epoch)
     out.probes += 1
     if alone is None:
         return out
@@ -106,7 +120,7 @@ def localise(
 
     # Then with everything. If the whole suite in front of it is not enough, there
     # is nothing here to narrow, and saying so beats halving noise for eight runs.
-    whole = _fails(repo, candidates, victim, timeout, python)
+    whole = _fails(repo, candidates, victim, timeout, python, epoch)
     out.probes += 1
     if not whole:
         return out
@@ -116,7 +130,7 @@ def localise(
         mid = len(candidates) // 2
         first, second = candidates[:mid], candidates[mid:]
 
-        first_fails = _fails(repo, first, victim, timeout, python)
+        first_fails = _fails(repo, first, victim, timeout, python, epoch)
         out.probes += 1
         if first_fails:
             candidates = first
@@ -124,7 +138,7 @@ def localise(
         if first_fails is None:
             break
 
-        second_fails = _fails(repo, second, victim, timeout, python)
+        second_fails = _fails(repo, second, victim, timeout, python, epoch)
         out.probes += 1
         if second_fails:
             candidates = second

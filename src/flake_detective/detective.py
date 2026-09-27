@@ -10,6 +10,7 @@ because a test that flips under identical conditions also flips when the order c
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,6 +66,16 @@ class Options:
     belongs to whoever is waiting.
     """
 
+    jobs: int = 1
+    """How many pytest processes to run at once. One by default, and for a reason.
+
+    Runs are independent processes, so several at once is faster in proportion to the
+    cores free. But two copies of a suite running side by side collide on anything the
+    suite fixes in place - a file in the repo, a port, a database name - and those
+    collisions are exactly the flakes this tool looks for. Raise it only for a suite
+    that is known not to share such things across processes.
+    """
+
     freeze_clock: bool = True
     """Pin the wall clock in every arm except the clock arm, which varies it.
 
@@ -75,87 +86,171 @@ class Options:
     """
 
 
+def _duration(seconds: float) -> str:
+    seconds = max(int(round(seconds)), 0)
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
+
+
+class _Progress:
+    """Per-run progress with an estimate of what is left.
+
+    Every run is a full pytest process, so a suite that takes twenty seconds costs
+    twenty seconds per run, times the runs, times the arms. Without a count and an
+    estimate, a long investigation looks exactly like a hung one.
+    """
+
+    def __init__(self, say, total: int) -> None:
+        self.say = say
+        self.total = max(total, 1)
+        self.done = 0
+        self.started = time.time()
+        self.name = ""
+        self.arm_done = 0
+        self.arm_total = 0
+
+    def start(self, name: str, units: int, what: str) -> None:
+        self.name, self.arm_done, self.arm_total = name, 0, units
+        self.say(f"{name}: {what}")
+
+    def tick(self) -> None:
+        self.done += 1
+        self.arm_done += 1
+        elapsed = time.time() - self.started
+        left = elapsed / self.done * (self.total - self.done)
+        eta = f", about {_duration(left)} left" if self.done < self.total else ""
+        self.say(
+            f"{self.name} {self.arm_done}/{self.arm_total}"
+            f"   (run {self.done} of {self.total}, {_duration(elapsed)} so far{eta})",
+            transient=True,
+        )
+
+
 def investigate(
     repo: Path,
     target: str = "",
     opts: Options | None = None,
     progress=None,
 ) -> Investigation:
+    """Run every arm, then classify.
+
+    `progress`, if given, is called as progress(message) for each stage and as
+    progress(message, transient=True) after every pytest run.
+    """
     opts = opts or Options()
-    say = progress or (lambda *_: None)
+    say = progress or (lambda *_a, **_k: None)
     started = time.time()
     epoch = freeze.BASELINE_EPOCH if opts.freeze_clock else None
 
-    tests = arms_mod.collect(repo, target, python=opts.python)
-    if not tests:
-        # No tests collected is not "no flakes found". Say which it is.
-        inv = Investigation(arms=[], total_tests=0)
+    def failed(problem: str, total: int = 0) -> Investigation:
+        inv = Investigation(arms=[], total_tests=total, problem=problem)
         inv.seconds = time.time() - started
         return inv
 
+    missing = arms_mod.pytest_problem(opts.python, repo)
+    if missing:
+        return failed(missing)
+
+    collection = arms_mod.collect_detailed(repo, target, python=opts.python)
+    if collection.error:
+        # No tests collected is not "no flakes found", and neither is a suite that
+        # would not import. Say which it is, in pytest's own words.
+        return failed(collection.error, len(collection.tests))
+    tests = collection.tests
     say(f"collected {len(tests)} tests")
 
-    say(f"baseline: {opts.runs} identical runs")
-    baseline = arms_mod.baseline_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
-    built: list[Arm] = [baseline]
-
+    # Decide every arm before running any, so the progress line can count down to
+    # the end of the whole investigation rather than the end of one arm.
+    n, t, py, jobs = opts.runs, opts.timeout, opts.python, opts.jobs
+    plan: list[tuple[str, int, str, Callable[[Callable[[], None]], Arm]]] = [
+        (
+            "baseline",
+            n,
+            f"{n} identical runs",
+            lambda tick: arms_mod.baseline_arm(repo, target, n, t, epoch, py, jobs, tick),
+        )
+    ]
     if "order" in opts.arms:
-        say(f"order: {opts.runs} shuffled runs")
-        built.append(
-            arms_mod.order_arm(
-                repo,
-                target,
-                tests,
-                opts.runs,
-                opts.timeout,
-                epoch,
-                opts.order_seed,
-                opts.python,
+        plan.append(
+            (
+                "order",
+                n,
+                f"{n} shuffled runs",
+                lambda tick: arms_mod.order_arm(
+                    repo, target, tests, n, t, epoch, opts.order_seed, py, jobs, tick
+                ),
             )
         )
     if "hashseed" in opts.arms:
-        say(f"hashseed: {opts.runs} runs, PYTHONHASHSEED 1..{opts.runs}")
-        built.append(
-            arms_mod.hashseed_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
+        plan.append(
+            (
+                "hashseed",
+                n,
+                f"{n} runs, PYTHONHASHSEED 1..{n}",
+                lambda tick: arms_mod.hashseed_arm(repo, target, n, t, epoch, py, jobs, tick),
+            )
         )
     if "timezone" in opts.arms:
-        if not arms_mod.tz_supported(opts.python):
+        if not arms_mod.tz_supported(py):
             # Not a platform guess: TZ only moves local time where time.tzset
             # exists. On Windows the Olson names are ignored while TZ=UTC shifts by
             # an hour, so an arm built on it can flip a test and then blame
             # "timezone" for something that reproduces nowhere the user runs it.
             say("timezone: skipped (TZ does not move local time on this platform)")
         else:
-            say(f"timezone: {opts.runs} runs, TZ varied")
-            built.append(
-                arms_mod.timezone_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
+            plan.append(
+                (
+                    "timezone",
+                    n,
+                    f"{n} runs, TZ varied",
+                    lambda tick: arms_mod.timezone_arm(repo, target, n, t, epoch, py, jobs, tick),
+                )
             )
     if "locale" in opts.arms:
-        if not arms_mod.locale_supported(opts.python):
+        if not arms_mod.locale_supported(py):
             say("locale: skipped (LANG and LC_ALL do not reach the locale on this platform)")
         else:
-            say(f"locale: {opts.runs} runs, LANG and LC_ALL varied")
-            built.append(
-                arms_mod.locale_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
+            plan.append(
+                (
+                    "locale",
+                    n,
+                    f"{n} runs, LANG and LC_ALL varied",
+                    lambda tick: arms_mod.locale_arm(repo, target, n, t, epoch, py, jobs, tick),
+                )
             )
     if "parallel" in opts.arms:
-        if not arms_mod.xdist_available(repo, opts.python):
+        if not arms_mod.xdist_available(repo, py):
             # Said, not skipped silently. Without xdist every run in the arm exits 4
             # and scores as unscoreable, which reads in the report as an arm that
             # found nothing rather than one that never ran.
             say("parallel: skipped (pytest-xdist is not installed in the target's environment)")
         else:
-            say(f"parallel: {opts.runs} runs across worker processes")
-            built.append(
-                arms_mod.parallel_arm(repo, target, opts.runs, opts.timeout, epoch, opts.python)
+            plan.append(
+                (
+                    "parallel",
+                    n,
+                    f"{n} runs across worker processes",
+                    lambda tick: arms_mod.parallel_arm(
+                        repo, target, n, t, epoch, py, jobs=jobs, tick=tick
+                    ),
+                )
             )
     if "isolation" in opts.arms:
         # One pass is one process per test, so this is the expensive arm and the cost
         # is stated rather than discovered.
-        say(f"isolation: {opts.runs} passes, {len(tests)} processes each")
-        built.append(
-            arms_mod.isolation_arm(
-                repo, target, opts.runs, opts.timeout, epoch, opts.python, tests
+        plan.append(
+            (
+                "isolation",
+                n * len(tests),
+                f"{n} passes, {len(tests)} processes each",
+                lambda tick: arms_mod.isolation_arm(
+                    repo, target, n, t, epoch, py, tests, jobs, tick
+                ),
             )
         )
     if "clock" in opts.arms:
@@ -164,8 +259,31 @@ def investigate(
             # arm, so this one would be a second baseline wearing a different label.
             say("clock: skipped (the clock is not frozen, so it cannot be varied)")
         else:
-            say(f"clock: {opts.runs} runs, frozen at a different date each time")
-            built.append(arms_mod.clock_arm(repo, target, opts.runs, opts.timeout, opts.python))
+            plan.append(
+                (
+                    "clock",
+                    n,
+                    f"{n} runs, frozen at a different date each time",
+                    lambda tick: arms_mod.clock_arm(repo, target, n, t, py, jobs, tick),
+                )
+            )
+
+    bar = _Progress(say, sum(units for _, units, _, _ in plan))
+    built: list[Arm] = []
+    for name, units, what, go in plan:
+        bar.start(name, units, what)
+        arm = go(bar.tick)
+        built.append(arm)
+        if name == "baseline" and not arm.runs:
+            # Nothing to compare the other arms against, so do not spend their runs.
+            inv = Investigation(arms=built, total_tests=len(tests))
+            inv.problem = (
+                f"none of the {arm.attempted} baseline runs could be scored, so nothing "
+                "was examined. The first one failed like this:\n    "
+                + arm.error.replace("\n", "\n    ")
+            )
+            inv.seconds = time.time() - started
+            return inv
 
     inv = classify(built, tests)
 
@@ -176,7 +294,7 @@ def investigate(
         order_flakes = [f for f in inv.flakes if f.cause is Cause.ORDER]
         for flake in order_flakes:
             say(f"localising: bisecting for what {flake.test_id} trips over")
-            found = _localise(repo, flake.test_id, tests, opts.timeout, opts.python)
+            found = _localise(repo, flake.test_id, tests, t, py, epoch=epoch)
             flake.culprits = found.culprits
             say(f"  {found.describe()}  ({found.probes} runs)")
 

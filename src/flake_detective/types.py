@@ -41,8 +41,7 @@ FIX = {
     Cause.HASH_SEED: "something iterates a dict or set and depends on the order; sort it",
     Cause.CLOCK: "it reads the wall clock; freeze or inject the time",
     Cause.TIMEZONE: (
-        "it depends on the machine's timezone; use an explicit tz instead of a naive "
-        "datetime"
+        "it depends on the machine's timezone; use an explicit tz instead of a naive datetime"
     ),
     Cause.LOCALE: (
         "it depends on the locale; case-folding, sorting and number formatting all "
@@ -71,6 +70,19 @@ class Arm:
     runs: int = 0
     failures: dict[str, int] = field(default_factory=dict)
     """test id -> how many of this arm's runs it failed."""
+
+    attempted: int = 0
+    """Runs asked for. `runs` counts only the ones that could be scored, and the gap
+    between the two is reported: an arm where pytest fell over every time has not
+    looked at anything, and must not read as an arm that found nothing."""
+
+    error: str = ""
+    """Why a run could not be scored, from the first one that could not - pytest's
+    exit code and the tail of what it printed."""
+
+    @property
+    def unscored(self) -> int:
+        return max(self.attempted - self.runs, 0)
 
     def rate(self, test_id: str) -> float:
         return self.failures.get(test_id, 0) / self.runs if self.runs else 0.0
@@ -127,6 +139,21 @@ class Investigation:
     """
 
     seconds: float = 0.0
+
+    problem: str = ""
+    """Why nothing could be examined, when that is what happened: pytest missing from
+    the interpreter, a collection error, no tests, or a baseline where no run could be
+    scored. Set means the investigation failed - it is never a clean result."""
+
+    @property
+    def incomplete(self) -> list[str]:
+        """Arms that were asked for and scored no runs at all."""
+        return [a.name for a in self.arms if a.attempted and not a.runs]
+
+    @property
+    def ok(self) -> bool:
+        """True only if tests were examined and every arm scored at least one run."""
+        return not self.problem and self.total_tests > 0 and not self.incomplete
 
     def by_cause(self) -> dict[str, int]:
         out: dict[str, int] = {}

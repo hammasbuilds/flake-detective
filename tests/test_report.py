@@ -58,7 +58,7 @@ def test_json_round_trips(tmp_path):
 
 
 def test_a_clean_report_states_what_it_could_have_missed():
-    """"No flaky tests found" is read as "this suite is clean", and it is not that.
+    """ "No flaky tests found" is read as "this suite is clean", and it is not that.
 
     Seven runs miss a test that fails half the time 0.8% of the time, and one that
     fails a tenth of the time 47.8% of the time. The second number is the one that

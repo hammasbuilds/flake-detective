@@ -30,15 +30,38 @@ from flake_detective.detective import Options, investigate
 from flake_detective.report import as_json
 
 
-def run(runs: int = 7, timeout: float = 120.0, progress=None) -> dict:
-    say = progress or (lambda *_: None)
+def run(
+    runs: int = 7,
+    timeout: float = 120.0,
+    progress=None,
+    python: str = "",
+    jobs: int = 1,
+) -> dict:
+    """Investigate the fixture and score the result against its answer key.
+
+    `jobs` is safe to raise here, unlike on an arbitrary suite: the fixture shares no
+    file, port or database between processes, so concurrent runs cannot collide.
+    """
+    say = progress or (lambda *_a, **_k: None)
     started = time.time()
 
     with tempfile.TemporaryDirectory(prefix="flake-bench-") as tmp:
         repo = fixture.write(Path(tmp) / "suite")
         say(f"fixture: {len(fixture.FILES)} files, {len(fixture.TRUTH)} tests, {runs} runs/arm")
 
-        inv = investigate(repo, "", Options(runs=runs, timeout=timeout), progress=say)
+        inv = investigate(
+            repo, "", Options(runs=runs, timeout=timeout, python=python, jobs=jobs), progress=say
+        )
+
+    if not inv.ok:
+        # A benchmark that could not run has no score. Reporting 0 of 4 detected would
+        # read as a classifier that failed, when nothing was classified at all.
+        return {
+            "runs_per_arm": runs,
+            "seconds": round(time.time() - started, 1),
+            "error": inv.problem or "these arms scored no runs: " + ", ".join(inv.incomplete),
+            "investigation": as_json(inv),
+        }
 
     found = {f.test_id: f.cause.value for f in inv.flakes}
     scored = fixture.score(found)
@@ -61,7 +84,13 @@ def run(runs: int = 7, timeout: float = 120.0, progress=None) -> dict:
     }
 
 
-def sweep(counts=(1, 2, 3, 5, 7, 11), timeout: float = 120.0, progress=None) -> dict:
+def sweep(
+    counts=(1, 2, 3, 5, 7, 11),
+    timeout: float = 120.0,
+    progress=None,
+    python: str = "",
+    jobs: int = 1,
+) -> dict:
     """The same fixture at several run counts.
 
     A single accuracy number is close to meaningless without the run count beside it, and
@@ -70,11 +99,13 @@ def sweep(counts=(1, 2, 3, 5, 7, 11), timeout: float = 120.0, progress=None) -> 
     visible at one run each; a test that flips *within* an arm needs enough runs to catch
     both sides of the flip.
     """
-    say = progress or (lambda *_: None)
+    say = progress or (lambda *_a, **_k: None)
     rows = []
     for n in counts:
         say(f"sweep: {n} runs per arm")
-        r = run(runs=n, timeout=timeout)
+        r = run(runs=n, timeout=timeout, python=python, jobs=jobs, progress=say)
+        if "error" in r:
+            return {"sweep": rows, "error": r["error"]}
         rows.append(
             {
                 "runs_per_arm": n,
@@ -88,7 +119,21 @@ def sweep(counts=(1, 2, 3, 5, 7, 11), timeout: float = 120.0, progress=None) -> 
     return {"sweep": rows}
 
 
+def _error_text(res: dict) -> str:
+    return "\n".join(
+        [
+            "=" * 66,
+            "BENCHMARK DID NOT RUN - there is no score",
+            "=" * 66,
+            "",
+            *res["error"].splitlines(),
+        ]
+    )
+
+
 def sweep_text(res: dict) -> str:
+    if "error" in res:
+        return _error_text(res)
     out = [
         "=" * 66,
         "RUNS PER ARM vs WHAT IS FOUND",
@@ -108,6 +153,8 @@ def sweep_text(res: dict) -> str:
 
 
 def text(res: dict) -> str:
+    if "error" in res:
+        return _error_text(res)
     d = res["detail"]
     out = [
         "=" * 66,
@@ -117,8 +164,12 @@ def text(res: dict) -> str:
         "",
         f"  detection        {d['detected']}/{d['flaky_in_fixture']}"
         f"   ({res['detection']:.0%})  flaky tests seen to flip",
-        f"  attribution      {d['correct_cause']}/{d['detected'] or 1}"
-        f"   ({res['attribution']:.0%})  of those, right cause",
+        (
+            f"  attribution      {d['correct_cause']}/{d['detected']}"
+            f"   ({res['attribution']:.0%})  of those, right cause"
+            if d["detected"]
+            else "  attribution      -      nothing detected, so nothing to attribute"
+        ),
         f"  false positives  {len(d['false_positives'])}/{d['stable_in_fixture']}"
         f"   ({res['false_positive_rate']:.0%})  stable tests wrongly flagged",
         "",
