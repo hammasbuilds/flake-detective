@@ -161,7 +161,7 @@ def _interaction(
             needs = b > 0.5
         if "isolation" not in names:
             counts += f", {_count(iso, test_id)} {_LABEL['isolation']}"
-    corroborated = " (the parallel arm, which also changes what runs before it, agrees)"
+    corroborated = " (the parallel arm, which also changes what runs before it, saw it change too)"
     extra = corroborated if "parallel" in names else ""
 
     if needs is True:

@@ -46,7 +46,7 @@ def test_parallel_agreeing_with_order_is_corroboration():
         Arm("parallel", "p", runs=4, failures={T: 3}),
     )
     assert f.cause is Cause.ORDER
-    assert "parallel arm" in f.evidence and "agrees" in f.evidence
+    assert "parallel arm" in f.evidence and "saw it change too" in f.evidence
 
 
 def test_a_test_that_needs_another_is_not_called_polluted():
