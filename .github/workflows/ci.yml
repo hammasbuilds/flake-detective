@@ -7,13 +7,19 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every version the classifiers claim. `investigate --help` once crashed on
+        # 3.11-3.13 and not on 3.14, the only one it had been run on.
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
-      - run: uv sync --all-extras
+      - run: uv sync --all-extras --python ${{ matrix.python }}
 
       - name: Lint
         run: |
@@ -25,3 +31,9 @@ jobs:
       # its numbers recorded in docs/RESULTS.md rather than gated on here.
       - name: Test
         run: uv run pytest -q
+
+      - name: Every subcommand's --help, through the installed entry point
+        run: |
+          uv run flake-detective --version
+          uv run flake-detective --help
+          for c in investigate bench fixture; do uv run flake-detective $c --help > /dev/null; done
