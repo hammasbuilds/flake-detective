@@ -11,8 +11,9 @@
 flake-detective runs your pytest suite many times, changing **one thing per batch of
 runs** — the test order, `PYTHONHASHSEED`, the frozen wall-clock date — and reports
 which change makes each flaky test flip. So instead of "`test_x` is flaky, rerun it"
-you get "`test_x` fails after `test_y` leaves state behind", with the failure rate
-under every condition printed beside the verdict.
+you get "`test_x` passes on its own and fails after `test_y`" (or "fails on its own and
+passes only after `test_y`", which needs the opposite fix), with the failure rate under
+every condition printed beside the verdict.
 
 `pytest-rerunfailures` makes a flaky test go away. This tells you why it was flaky.
 
@@ -52,8 +53,11 @@ leave `--python` out.
 # In CI: exit 1 if anything flaky is found, 2 if the suite could not be examined
 flake-detective investigate . tests --runs 5 --fail-on-flake
 
-# Name the earlier test that causes each order dependence, not just the victim
+# Name the other test in each order dependence, and which way round it is
 flake-detective investigate . tests --localise
+
+# Repeat an earlier investigation's shuffles exactly (the report prints the seed)
+flake-detective investigate . tests --seed 1234
 
 # Check the tool against a suite whose answers are known (about a minute)
 flake-detective bench
@@ -66,10 +70,11 @@ flake-detective fixture ./flake-fixture
 
 The built-in benchmark's suite — written to be flaky in four specified ways — at the
 default 7 runs per arm, from `flake-detective fixture ./fx` then
-`flake-detective investigate ./fx`:
+`flake-detective investigate ./fx --seed 0`:
 
 ```
-10 tests, 4 arms, 99s
+10 tests, 4 arms, 37s
+order seed 0 (--seed 0 repeats these shuffles)
 
   baseline   7 runs         identical conditions, repeated
   order      7 runs         the same tests, shuffled
@@ -82,12 +87,15 @@ default 7 runs per arm, from `flake-detective fixture ./fx` then
     1  clock
     1  nondeterminism
 
+Rates are failures over the runs that observed the test; - means an arm
+never saw it pass or fail. Setup and teardown errors count as failures.
+
 --------------------------------------------------------------------------
 test                                                   baseline    order hashseed    clock
 --------------------------------------------------------------------------
 test_order_dependent.py::test_aaa_first_one_wins            0.0      0.4      0.0      0.0
-    ORDER: stable under identical repetition; failed 3 of 7 runs when the same tests, shuffled
-    fix: a previous test leaves state behind; isolate it or reset in a fixture
+    ORDER (direction undetermined): failed 0 of 7 baseline runs, 3 of 7 shuffled: its result depends on which tests run before it. The order arm cannot say which way - broken by another test, or relying on one - and nothing else measured it
+    fix: its result depends on which tests run before it: another test either leaks state into it or creates state it relies on. --localise names that test and says which (so does --arms isolation)
 
 ..._hash_dependent.py::test_first_of_a_set_is_stable        0.0      0.0      0.7      0.0
     HASH-SEED: stable under identical repetition; failed 5 of 7 runs when PYTHONHASHSEED varied
@@ -97,13 +105,15 @@ test_clock_dependent.py::test_second_is_even                0.0      0.0      0.
     CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock frozen at a different date each run
     fix: it reads the wall clock; freeze or inject the time
 
-test_nondeterministic.py::test_unseeded_random              0.6      0.1      0.3      0.6
-    NONDETERMINISM: flipped with nothing changed: failed 4 of 7 identical runs
+test_nondeterministic.py::test_unseeded_random              0.4      0.4      0.6      0.9
+    NONDETERMINISM: flipped with nothing changed: failed 3 of 7 identical runs
     fix: it flips with nothing changed - unseeded randomness, or a race
 ```
 
 **The evidence is the shape of the row, not the label.** Three rows are zero everywhere
-but one column — that is what an attribution looks like. The fourth is nonzero in
+but one column — that is what an attribution looks like. The order row says *direction
+undetermined* because only the order arm measured it; `--localise` would add "passes on
+its own and fails after `test_bbb_also_appends`" (checked: 7 extra runs). The fourth is nonzero in
 *every* column including the control, which is nondeterminism whatever word sits beside
 it. (The nondeterministic row's exact numbers change from run to run; that is the point
 of it.)
@@ -131,7 +141,7 @@ other work at the time (so read these as upper bounds):
 |---|---:|---:|
 | `flake-detective bench` (default `--jobs 4`) | 28 | 38 s and 67 s, in two runs |
 | `flake-detective bench --jobs 1` | 28 | 142 s |
-| `flake-detective investigate ./fx` (the same suite, `--jobs 1`) | 28 | 99 s |
+| `flake-detective investigate ./fx` (the same suite, `--jobs 1`) | 28 | 99 s; 37 s on a later, quieter run |
 
 The two `--jobs 1` rows do the same work; the 40-second gap between them is the machine's
 load, not the tool. Most of each run is pytest starting up, so on your suite expect
@@ -155,7 +165,8 @@ that many runs can miss), or pick arms with `--arms`.
 | `--python PATH` | this interpreter | the interpreter (or venv directory) your tests run with; must have pytest |
 | `--jobs N` | 1 | pytest processes at once — see above before raising it |
 | `--timeout S` | 900 | seconds per pytest run; a run that times out is left out and reported |
-| `--localise` | off | bisect each order dependence to the earlier test that causes it (about log2(n) extra runs each) |
+| `--localise` | off | bisect each order dependence to the other test involved, and say whether that test breaks it or it needs that test (about log2(n) extra runs each); shown in the report and the JSON |
+| `--seed N` | random | seed for the order arm's shuffles; the report prints it, so any run can be repeated |
 | `--fail-on-flake` | off | exit 1 if anything flaky is found |
 | `--json FILE` | — | also write the findings, including any error, as JSON |
 | `--no-freeze-clock` | off | do not pin the wall clock (disables the clock arm) |
@@ -165,8 +176,10 @@ that many runs can miss), or pick arms with `--arms`.
 **Exit status:** `0` examined and (with `--fail-on-flake`) nothing flaky; `1` flaky tests
 found with `--fail-on-flake`; `2` nothing — or not everything — could be examined: bad
 arguments, pytest missing from the target interpreter, a collection error, no tests
-collected, or an arm in which no run could be scored. Exit 2 always comes with the
-reason, in pytest's own words where there are any.
+collected, every test skipped, or an arm in which no run could be scored. Exit 2 always
+comes with the reason, in pytest's own words where there are any, on stderr. `130`
+interrupted with Ctrl-C: running pytest processes are killed and the runs that finished
+are still reported, marked INTERRUPTED.
 
 ## How it works
 
@@ -180,20 +193,21 @@ reason, in pytest's own words where there are any.
               hashseed   change PYTHONHASHSEED
               clock      move the frozen date
                   |
-                  +-- exactly one arm disagrees --> that arm is the cause
-                  +-- more than one disagrees   --> UNKNOWN, not a guess
+                  +-- one environment arm disagrees     --> that arm is the cause
+                  +-- only order/isolation/parallel do  --> ORDER or NEEDS-OTHER-TEST
+                  +-- two independent arms disagree     --> UNKNOWN, not a guess
 ```
 
 | what varies | what it proves when the test flips |
 |---|---|
 | nothing at all | nondeterminism — unseeded randomness, or a race |
-| the order | a previous test leaves state behind |
+| the order | its result depends on which tests run before it (direction: see below) |
 | `PYTHONHASHSEED` | something iterates a dict or set and depends on the order |
 | the frozen date | it reads the wall clock |
 | `TZ` (opt-in, POSIX) | it depends on the machine's timezone |
 | `LANG`/`LC_ALL` (opt-in, POSIX) | it depends on the locale |
 | `pytest -n 4` (opt-in, needs pytest-xdist) | tests share a fixed file, port or database |
-| each test alone (opt-in) | it only passes because of what ran before it |
+| each test alone (opt-in) | which way an order dependence points |
 
 **"Identical" takes work.** CPython randomises string hashing on every start, and the
 clock moves while the suite runs. Both are **pinned in every arm** — seed `0`, and the
@@ -213,8 +227,34 @@ differs from the baseline's.
 
 **The baseline is checked first and wins.** A test that flips with nothing changed also
 flips when the order changes; without that precedence every arm would take credit for
-it. And **two arms means `UNKNOWN`, never the first match** — a wrong cause sends
+it. **Two independent arms means `UNKNOWN`, never the first match** — a wrong cause sends
 somebody to the wrong file, which is worse than no cause.
+
+**Order, isolation and parallel are one family.** All three change which other tests run
+before this one in the same process, so when more than one of them implicates a test that
+is corroboration, not a conflict. (An environment arm — hashseed, clock, timezone, locale —
+together with any other arm is still `UNKNOWN`.) A flip under `parallel` alone is credited
+to parallelism: something shared between processes.
+
+**An order dependence has a direction**, and the two have opposite fixes:
+
+| | run alone | reported as |
+|---|---|---|
+| another test leaks state into it | passes | `ORDER`, with the other test under `caused by` |
+| it relies on state another test creates | fails | `NEEDS-OTHER-TEST`, with the other test under `needs` |
+
+The order arm alone cannot tell these apart — both fail in some shuffles — so without the
+`isolation` arm or `--localise` the finding says `ORDER (direction undetermined)` and the
+advice says how to find out, rather than guessing. `--localise` runs the test alone once
+to fix the direction, then bisects for the test that breaks it or the test it needs.
+
+**What each test did comes from pytest, not from the terminal.** A plugin injected into
+every run records pytest's own setup, call and teardown reports. A fixture error counts
+as a failure. A test counts only in runs where it was seen to pass or fail — a skipped
+test, or one a run never reached, is not a pass. Options in your `addopts` that would stop
+a run early or reorder it by history (`-x`, `--maxfail`, `--sw`, `--lf`, `--ff`, `--nf`,
+and xdist's `-n` outside the parallel arm) are switched off for these runs; the rest of
+your `addopts` is kept. A pytest-rerunfailures retry counts as the failure it was.
 
 ## How well it works
 
@@ -229,16 +269,16 @@ What a run count buys, from `flake-detective bench --sweep`:
 
 | runs/arm | detection | attribution | false pos | secs |
 |---:|---:|---:|---:|---:|
-| 1 | 50% | **0%** | 0% | 28 |
-| 2 | 100% | 100% | 0% | 31 |
-| 3 | 100% | 100% | 0% | 18 |
+| 1 | 75% | **0%** | 0% | 18 |
+| 2 | 100% | 100% | 0% | 26 |
+| 3 | 100% | 100% | 0% | 19 |
 | 5 | 100% | 100% | 0% | 22 |
-| 7 | 100% | 100% | 0% | 32 |
-| 11 | 100% | 100% | 0% | 51 |
+| 7 | 100% | 100% | 0% | 24 |
+| 11 | 100% | 100% | 0% | 30 |
 
-Seconds are with the default `--jobs 4` on the same busy machine, and noisy: the one-run
-row took longer than the three-run row. Detection at one run varies between sweeps (an
-earlier one found 3 of 4, this one 2 of 4) because a single shuffle may or may not put
+Seconds are with the default `--jobs 4` on the same busy machine, and noisy: the two-run
+row took longer than the three-run row. Detection at one run varies between sweeps
+(earlier ones found 3 of 4 and 2 of 4, this one 3 of 4) because a single shuffle may or may not put
 the order-dependent pair the wrong way round.
 
 The zero attribution at one run is deliberate. One run per arm finds instability and
@@ -247,6 +287,11 @@ that cannot flip cannot rule out nondeterminism. Before that refusal existed, th
 pass reported the nondeterministic test as `clock` — confidently, and wrongly.
 
 ### On real suites, where every finding would be a false positive
+
+These two passes, and the planted-flake study below, were measured before outcomes were
+read from pytest's own reports (the audit fixes listed further down). The change can only
+add observations — errors, and ids the old parser dropped — so re-measuring could raise the
+false-positive count; it has not been re-run.
 
 Two separate passes over real, deterministic suites, at different depths:
 
@@ -302,8 +347,10 @@ Full details: [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/
   themselves with a message instead of producing a cause that reproduces nowhere.
 - **No arm for filesystem ordering.** `os.listdir` order, case-insensitive paths and inode
   ordering are real sources of flakiness and none of them is varied.
-- **`UNKNOWN` is common and stays that way.** Two arms disagreeing means no single cause
-  was established.
+- **`UNKNOWN` is common and stays that way.** Two independent arms disagreeing means no
+  single cause was established.
+- **Without `--localise` or the `isolation` arm, an order dependence has no direction.**
+  The report says so (`direction undetermined`) instead of guessing which test is to blame.
 - **A test that fails under every sampled condition reads as broken, not flaky**, and is
   listed separately rather than dropped.
 - **The clock freeze does not reach everything.** A module that did
@@ -336,6 +383,28 @@ caught them.
   with pytest missing, `bench` reported "detection 0/4" as though the classifier had
   failed. Each is now exit status 2 with the reason.
 
+An independent audit of the first release candidate found more, all of the same kind:
+
+- **Fixture errors were invisible.** Outcomes were scraped from pytest's `-rf` summary,
+  which prints `FAILED` lines only. A test whose fixture raised in every baseline run
+  appeared nowhere — not as flaky, not even as broken.
+- **A test that never ran counted as a pass.** With `addopts = -x`, an order-dependent test
+  sitting after a random failure came back as *nondeterminism* (baseline 0.6), because in
+  the runs where the earlier test failed it never ran at all.
+- **A test id containing `" - "` vanished**: the summary line uses that to separate the id
+  from the message.
+- **A REPO below the rootdir wasted every order run.** With `mono/pytest.ini` and
+  `investigate mono/pkg`, node ids came back relative to `mono` and were passed back from
+  `mono/pkg`: "file or directory not found". They are now made absolute.
+- **More arms gave a weaker answer.** Under `--arms all` a plain polluter/victim pair was
+  `UNKNOWN (order, parallel, isolation)`, and the headline said "9 flaky tests" but listed
+  four, because its list of causes predated four of the arms.
+- **A test that needs another was told the other test was polluting it**, and `--localise`
+  then called it "broken, not order-dependent" because it fails alone.
+- **Ctrl-C printed a twenty-line traceback and threw away every finished run.**
+
+All of these now have regression tests.
+
 ## Layout
 
 ```
@@ -343,9 +412,10 @@ src/flake_detective/
   cli.py         the command line, argument checks, exit codes
   detective.py   plan the arms, run them with progress, then classify
   run.py         the arms; pins seed and clock in all of them
+  observe.py     the plugin that records each test's outcome from pytest's own reports
   freeze.py      the clock-freezing plugin, the frozen dates, and why monotonic is spared
   classify.py    attribution by exclusion, and what "implicated" has to mean
-  localise.py    bisection from an order-dependent victim to its culprit
+  localise.py    run alone for the direction, then bisect for the other test
   report.py      every arm's rate printed beside the verdict
   fixture.py     a suite with known causes, plus decoys that look flaky
   bench.py       detection, attribution and false positives - all three or none

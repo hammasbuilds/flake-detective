@@ -19,7 +19,14 @@ First release.
   with a message on Windows, where the variables do not reach the interpreter),
   `parallel` (needs pytest-xdist in the target environment) and `isolation` (every test
   alone in its own process). `--arms all` turns on everything.
-- `--localise` - bisects each order dependence to name the earlier test that causes it.
+- `--localise` - runs each order-dependent test alone to find which way the dependence
+  points, then bisects for the other test: the one that breaks it, or the one it needs.
+  The result is in the report and the JSON.
+- Order dependence is reported with a direction: `order` (another test leaks state into
+  it) or `needs-other-test` (it relies on state another test creates). Without the
+  isolation arm or `--localise` the direction is reported as undetermined.
+- `--seed N` for the order arm's shuffles; the default is random and printed in the report.
+- Ctrl-C kills running pytest processes, reports the runs that finished, and exits 130.
 - `--python PATH` - the interpreter, or venv directory, the suite runs with.
 - `--jobs N` - run N pytest processes at once. Default 1 for `investigate`, because
   concurrent copies of a real suite can collide on shared files or ports; up to 4 for
@@ -32,11 +39,30 @@ First release.
 - `flake-detective fixture DIR` - writes that suite out to read.
 - Exit status: 0 clean, 1 flaky tests found with `--fail-on-flake`, 2 when nothing (or
   not everything) could be examined - bad arguments, pytest missing from the target
-  interpreter, a collection error, no tests, or an arm with no scoreable run.
+  interpreter, a collection error, no tests, every test skipped, or an arm with no
+  scoreable run - and 130 on Ctrl-C. Error reports go to stderr.
 - Zero runtime dependencies. pytest is run as a subprocess in the target interpreter,
   never imported.
 
 ### Fixed (found before release)
+
+- Outcomes were scraped from pytest's `-rf` summary. Now a plugin records pytest's own
+  reports, which fixes: setup/teardown errors being invisible (a fixture-level order
+  dependence appeared nowhere); a test that did not run (`-x`, `--maxfail`, `--sw` in
+  addopts) counting as a pass; a test id containing `" - "` being dropped; and `-q`/`-v`
+  in addopts breaking collection. `-x`, `--maxfail`, `--sw`, `--lf`, `--ff`, `--nf` and
+  xdist `-n` in addopts are neutralised; the rest of addopts is kept.
+- With REPO below pytest's rootdir (`mono/pkg` with `mono/pytest.ini`), every order,
+  isolation and localise run failed with "file or directory not found".
+- Under `--arms all`, a polluter/victim pair came back `unknown` because order, parallel
+  and isolation were treated as rival causes; they now corroborate each other.
+- The headline count listed only five of the nine causes.
+- A test that needs another test's state was reported as polluted by it, and
+  `--localise` called it "broken, not order-dependent".
+- A suite where every test skipped reported "No flaky tests found".
+- Ctrl-C printed a traceback and discarded finished runs.
+- The file-as-REPO hint suggested the file's own folder as REPO, which changes the rootdir.
+- `ruff check`/`ruff format --check` on `demo.py`, which the release workflow runs, failed.
 
 - `investigate --help` crashed on Python 3.11-3.13 (`TypeError: %o format`) because of a
   literal `%` in the `--runs` help.

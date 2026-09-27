@@ -41,8 +41,14 @@ under "failed in every run" instead. A real hash-order flake usually passes.
 
 ### Full report, 7 runs per arm
 
+Re-run on 2026-09-27 after outcomes moved to pytest's own reports, from a wheel installed
+into a fresh venv (`flake-detective investigate ./fx --seed 0`). The order row now says its
+direction is undetermined: only the order arm measured it. `--localise` adds "passes on its
+own and fails after `test_bbb_also_appends`".
+
 ```
-10 tests, 4 arms, 99s
+10 tests, 4 arms, 37s
+order seed 0 (--seed 0 repeats these shuffles)
 
   baseline   7 runs         identical conditions, repeated
   order      7 runs         the same tests, shuffled
@@ -55,12 +61,15 @@ under "failed in every run" instead. A real hash-order flake usually passes.
     1  clock
     1  nondeterminism
 
+Rates are failures over the runs that observed the test; - means an arm
+never saw it pass or fail. Setup and teardown errors count as failures.
+
 --------------------------------------------------------------------------
 test                                                   baseline    order hashseed    clock
 --------------------------------------------------------------------------
 test_order_dependent.py::test_aaa_first_one_wins            0.0      0.4      0.0      0.0
-    ORDER: stable under identical repetition; failed 3 of 7 runs when the same tests, shuffled
-    fix: a previous test leaves state behind; isolate it or reset in a fixture
+    ORDER (direction undetermined): failed 0 of 7 baseline runs, 3 of 7 shuffled: its result depends on which tests run before it. The order arm cannot say which way - broken by another test, or relying on one - and nothing else measured it
+    fix: its result depends on which tests run before it: another test either leaks state into it or creates state it relies on. --localise names that test and says which (so does --arms isolation)
 
 ..._hash_dependent.py::test_first_of_a_set_is_stable        0.0      0.0      0.7      0.0
     HASH-SEED: stable under identical repetition; failed 5 of 7 runs when PYTHONHASHSEED varied
@@ -70,8 +79,8 @@ test_clock_dependent.py::test_second_is_even                0.0      0.0      0.
     CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock frozen at a different date each run
     fix: it reads the wall clock; freeze or inject the time
 
-test_nondeterministic.py::test_unseeded_random              0.6      0.1      0.3      0.6
-    NONDETERMINISM: flipped with nothing changed: failed 4 of 7 identical runs
+test_nondeterministic.py::test_unseeded_random              0.4      0.4      0.6      0.9
+    NONDETERMINISM: flipped with nothing changed: failed 3 of 7 identical runs
     fix: it flips with nothing changed - unseeded randomness, or a race
 ```
 
@@ -85,12 +94,12 @@ regardless of the label printed beside it.
 
 ```
  runs   detection   attribution   false pos    secs
-    1        50%            0%          0%      28
-    2       100%          100%          0%      31
-    3       100%          100%          0%      18
+    1        75%            0%          0%      18
+    2       100%          100%          0%      26
+    3       100%          100%          0%      19
     5       100%          100%          0%      22
-    7       100%          100%          0%      32
-   11       100%          100%          0%      51
+    7       100%          100%          0%      24
+   11       100%          100%          0%      30
 ```
 
 - **detection** — of the four flaky tests, how many were reported at all
@@ -100,7 +109,7 @@ regardless of the label printed beside it.
 All three or none. A tool reporting every test as `nondeterminism` scores 100% detection; one
 reporting nothing scores zero false positives.
 
-**The zero at one run is the point.** One run per arm still detects some of the four - two in this sweep, three in an earlier one, depending on whether a single shuffle happens to reverse the order pair - because
+**The zero at one run is the point.** One run per arm still detects some of the four - three in this sweep, two and three in earlier ones, depending on whether a single shuffle happens to reverse the order pair - because
 an arm landing on a different failure rate than the baseline is evidence even from a single
 run each. What it cannot do is *attribute*: a baseline that runs once cannot flip, so
 nondeterminism can never be excluded, and every finding is `UNKNOWN`.
@@ -117,6 +126,10 @@ run count is a bound on what can be seen, not a quality setting.
 ---
 
 ## 3. Five real repositories
+
+Measured before outcomes were read from pytest's own reports (the round-2 audit fixes);
+not re-run since. The new reader only adds observations - errors, and ids the old parser
+dropped - so a re-run could only find more, not fewer.
 
 Five projects with no known flakiness, at 5 runs per arm — 20 runs each, **3,320 test
 executions in 150 seconds**. Every finding here would be a false positive.
