@@ -2,14 +2,13 @@
   "sweep": [
     {
       "runs_per_arm": 1,
-      "detection": 0.75,
+      "detection": 0.5,
       "attribution": 0.0,
       "false_positive_rate": 0.0,
-      "seconds": 2.3,
+      "seconds": 27.9,
       "reported": {
         "test_clock_dependent.py::test_second_is_even": "unknown",
-        "test_hash_dependent.py::test_first_of_a_set_is_stable": "unknown",
-        "test_nondeterministic.py::test_unseeded_random": "unknown"
+        "test_hash_dependent.py::test_first_of_a_set_is_stable": "unknown"
       }
     },
     {
@@ -17,7 +16,7 @@
       "detection": 1.0,
       "attribution": 1.0,
       "false_positive_rate": 0.0,
-      "seconds": 4.4,
+      "seconds": 31.3,
       "reported": {
         "test_clock_dependent.py::test_second_is_even": "clock",
         "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
@@ -30,7 +29,7 @@
       "detection": 1.0,
       "attribution": 1.0,
       "false_positive_rate": 0.0,
-      "seconds": 5.8,
+      "seconds": 17.5,
       "reported": {
         "test_clock_dependent.py::test_second_is_even": "clock",
         "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
@@ -43,7 +42,7 @@
       "detection": 1.0,
       "attribution": 1.0,
       "false_positive_rate": 0.0,
-      "seconds": 9.6,
+      "seconds": 21.6,
       "reported": {
         "test_clock_dependent.py::test_second_is_even": "clock",
         "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
@@ -56,7 +55,7 @@
       "detection": 1.0,
       "attribution": 1.0,
       "false_positive_rate": 0.0,
-      "seconds": 13.6,
+      "seconds": 31.7,
       "reported": {
         "test_clock_dependent.py::test_second_is_even": "clock",
         "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
@@ -69,7 +68,7 @@
       "detection": 1.0,
       "attribution": 1.0,
       "false_positive_rate": 0.0,
-      "seconds": 21.1,
+      "seconds": 51.1,
       "reported": {
         "test_clock_dependent.py::test_second_is_even": "clock",
         "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",

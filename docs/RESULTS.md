@@ -9,13 +9,16 @@ exists. So there is a fixture, written to be flaky in specified ways.
 **Does it cry wolf on real code?** A fixture cannot answer that at all. So it is also run
 against five real repositories, where every finding would be a false positive.
 
-Reproduce with `flake-detective bench --sweep` and `flake-detective investigate <repo>`.
+Reproduce with `flake-detective bench --sweep` and `flake-detective investigate REPO [TARGET]`.
+
+The fixture numbers below were re-measured on 2026-09-27 on a busy 16-core Windows machine
+(`bench --sweep` with the default `--jobs 4`), so the seconds are noisy upper bounds.
 
 ---
 
 ## 1. The fixture
 
-Nine keyed tests. Four flaky, one per cause. Five stable — and three of those are written to
+Ten keyed tests. Four flaky, one per cause. Six stable — and three of those are written to
 *look* flaky. Without the decoys, a classifier that shouted "order dependence" at every test
 would post perfect detection and perfect attribution on the one cause it ever names.
 
@@ -25,6 +28,7 @@ would post perfect detection and perfect attribution on the one cause it ever na
 | `test_first_of_a_set_is_stable` | **hash-seed** | `next(iter({"alpha", "beta"}))` — two elements, so about half of seeds pass |
 | `test_second_is_even` | **clock** | `int(time.time()) % 2 == 0` |
 | `test_unseeded_random` | **nondeterminism** | `random.random() < 0.5`, seeded from the OS |
+| `test_bbb_also_appends` | stable | the other half of the order pair; passes whatever runs first |
 | `test_sorted_set_is_deterministic` | stable | iterates a set — but sorts it first |
 | `test_module_state_but_cleans_up` | stable | mutates module state — and clears it in `finally` |
 | `test_clock_but_only_a_duration` | stable | reads the clock — but only compares a duration |
@@ -38,12 +42,12 @@ under "failed in every run" instead. A real hash-order flake usually passes.
 ### Full report, 7 runs per arm
 
 ```
-10 tests, 4 arms, 12s
+10 tests, 4 arms, 99s
 
-  baseline   7 runs   identical conditions, repeated
-  order      7 runs   the same tests, shuffled
-  hashseed   7 runs   PYTHONHASHSEED varied
-  clock      7 runs   the wall clock frozen at a different date each run
+  baseline   7 runs         identical conditions, repeated
+  order      7 runs         the same tests, shuffled
+  hashseed   7 runs         PYTHONHASHSEED varied
+  clock      7 runs         the wall clock frozen at a different date each run
 
 4 flaky tests:
     1  order
@@ -51,7 +55,9 @@ under "failed in every run" instead. A real hash-order flake usually passes.
     1  clock
     1  nondeterminism
 
+--------------------------------------------------------------------------
 test                                                   baseline    order hashseed    clock
+--------------------------------------------------------------------------
 test_order_dependent.py::test_aaa_first_one_wins            0.0      0.4      0.0      0.0
     ORDER: stable under identical repetition; failed 3 of 7 runs when the same tests, shuffled
     fix: a previous test leaves state behind; isolate it or reset in a fixture
@@ -61,12 +67,11 @@ test_order_dependent.py::test_aaa_first_one_wins            0.0      0.4      0.
     fix: something iterates a dict or set and depends on the order; sort it
 
 test_clock_dependent.py::test_second_is_even                0.0      0.0      0.0      0.4
-    CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock
-           frozen at a different date each run
+    CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock frozen at a different date each run
     fix: it reads the wall clock; freeze or inject the time
 
-test_nondeterministic.py::test_unseeded_random              0.3      0.7      0.3      0.6
-    NONDETERMINISM: flipped with nothing changed: failed 2 of 7 identical runs
+test_nondeterministic.py::test_unseeded_random              0.6      0.1      0.3      0.6
+    NONDETERMINISM: flipped with nothing changed: failed 4 of 7 identical runs
     fix: it flips with nothing changed - unseeded randomness, or a race
 ```
 
@@ -80,22 +85,22 @@ regardless of the label printed beside it.
 
 ```
  runs   detection   attribution   false pos    secs
-    1        75%            0%          0%       2
-    2       100%          100%          0%       4
-    3       100%          100%          0%       6
-    5       100%          100%          0%      10
-    7       100%          100%          0%      14
-   11       100%          100%          0%      21
+    1        50%            0%          0%      28
+    2       100%          100%          0%      31
+    3       100%          100%          0%      18
+    5       100%          100%          0%      22
+    7       100%          100%          0%      32
+   11       100%          100%          0%      51
 ```
 
 - **detection** — of the four flaky tests, how many were reported at all
 - **attribution** — of those, how many got the right cause
-- **false positives** — of the five stable tests, how many were reported as flaky
+- **false positives** — of the six stable tests, how many were reported as flaky
 
 All three or none. A tool reporting every test as `nondeterminism` scores 100% detection; one
 reporting nothing scores zero false positives.
 
-**The zero at one run is the point.** One run per arm still detects three of the four, because
+**The zero at one run is the point.** One run per arm still detects some of the four - two in this sweep, three in an earlier one, depending on whether a single shuffle happens to reverse the order pair - because
 an arm landing on a different failure rate than the baseline is evidence even from a single
 run each. What it cannot do is *attribute*: a baseline that runs once cannot flip, so
 nondeterminism can never be excluded, and every finding is `UNKNOWN`.
@@ -138,15 +143,16 @@ per arm" rather than "no flaky tests", because those are different claims.
 
 ## 4. What the numbers do not say
 
-- **100% on a nine-test fixture is a small claim.** It is one test per cause. What makes it
+- **100% on a ten-test fixture is a small claim.** It is one test per cause. What makes it
   worth anything is the decoys and the failures it started from — 75% detection and 67%
   attribution on the first run, which is how three of the four bugs below were found.
 - **The fixture was wrong twice.** A benchmark is only as trustworthy as its answer key. One
   "stable" decoy asserted a float literal from one Python build and always failed; the
   hash-dependent test used an eight-element set and failed under nearly every seed. Both are
   now checked by actually running them, in `tests/test_fixture.py`.
-- **No parallelism arm, no environment arm.** Both are real sources of flakiness and neither
-  is covered. Each needs its own control.
+- **The timezone, locale, parallel and isolation arms are not in this sweep.** They are
+  opt-in and the fixture has no test aimed at them; their behaviour is covered by unit tests,
+  not by a scored benchmark. timezone and locale skip themselves on Windows.
 - **The real-repo runs are my own repositories.** They share an author, a style and zero
   runtime dependencies, so a clean sweep across them is weaker evidence than five unrelated
   projects would be.
