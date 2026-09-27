@@ -126,6 +126,10 @@ FILES = {
 # The answer key. `None` means "must not be reported as flaky at all".
 TRUTH = {
     "test_order_dependent.py::test_aaa_first_one_wins": "order",
+    # The other half of the order pair. It passes whatever runs before it, so it is
+    # stable - and a classifier that blamed the culprit instead of the victim, or
+    # both, would be caught here as a false positive.
+    "test_order_dependent.py::test_bbb_also_appends": None,
     "test_hash_dependent.py::test_first_of_a_set_is_stable": "hash-seed",
     "test_clock_dependent.py::test_second_is_even": "clock",
     "test_nondeterministic.py::test_unseeded_random": "nondeterminism",

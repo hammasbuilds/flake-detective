@@ -26,12 +26,11 @@ def test_every_file_is_written(suite: Path):
 
 
 def test_the_answer_key_covers_every_collected_test(suite: Path):
+    """Every collected test is keyed, so the count the benchmark prints is the count
+    pytest collects. It used to say 9 tests while pytest collected 10."""
     collected = set(collect(suite))
     keyed = set(fixture.TRUTH)
-    # test_bbb_also_appends exists to give the order-dependent test something to collide
-    # with; it is not itself a claim, so it is the one test allowed to be unkeyed.
-    assert collected - keyed == {"test_order_dependent.py::test_bbb_also_appends"}
-    assert keyed - collected == set()
+    assert collected == keyed
 
 
 def test_the_key_names_only_real_causes():
@@ -96,4 +95,4 @@ def test_shouting_one_cause_at_everything_does_not_score_well():
     s = fixture.score(dict.fromkeys(fixture.TRUTH, "order"))
     assert s["detected"] == 4
     assert s["correct_cause"] == 1
-    assert len(s["false_positives"]) == 5
+    assert len(s["false_positives"]) == 6
