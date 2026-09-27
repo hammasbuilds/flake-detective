@@ -33,7 +33,10 @@ def main() -> int:
     print("\nEach cause above was planted deliberately, so the diagnosis is", flush=True)
     print("checkable rather than merely plausible.\n", flush=True)
     print("Point it at your own suite with:", flush=True)
-    print("    flake-detective investigate PROJECT_DIR [TESTS] --python PROJECT_VENV_PYTHON", flush=True)
+    print(
+        "    flake-detective investigate PROJECT_DIR [TESTS] --python PROJECT_VENV_PYTHON",
+        flush=True,
+    )
     return 0
 
 
