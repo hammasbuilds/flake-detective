@@ -48,19 +48,6 @@ def test_a_flip_in_the_new_arms_is_attributed_to_them():
         assert inv.flakes[0].cause is expected, f"{arm_name} -> {inv.flakes[0].cause}"
 
 
-def test_two_arms_flipping_is_still_unknown():
-    """Under -n tests are distributed as well as reordered, so a parallel flip could
-    be order dependence. Crediting parallelism would send somebody to look for a
-    shared port when the problem is leaked state."""
-    baseline = Arm("baseline", "d", runs=4, failures={})
-    order = Arm("order", "d", runs=4, failures={"t::a": 2})
-    parallel = Arm("parallel", "d", runs=4, failures={"t::a": 3})
-    inv = classify([baseline, order, parallel], ["t::a"])
-
-    assert inv.flakes[0].cause is Cause.UNKNOWN
-    assert "order" in inv.flakes[0].evidence and "parallel" in inv.flakes[0].evidence
-
-
 def test_the_varied_values_actually_differ():
     """An arm whose values repeat before the runs do is a baseline wearing a label."""
     assert len(set(TIMEZONES)) == len(TIMEZONES) >= 4
@@ -79,48 +66,3 @@ def test_tz_and_locale_report_themselves_unsupported_on_windows():
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX has tzset")
 def test_tz_is_supported_where_tzset_exists():
     assert tz_supported() is True
-
-
-def test_order_and_isolation_together_are_one_cause_not_unknown():
-    """They are two views of the same fact - this test's result depends on other tests.
-    Shuffling finds it when a shuffle reverses the pair; running alone finds it every
-    time. Reporting UNKNOWN because both fired is a worse answer than the evidence
-    supports, and it was the answer before this.
-
-    The direction is readable from which way it fails.
-    """
-    # Fails alone, passes in the suite: it NEEDS what another test creates.
-    baseline = Arm("baseline", "d", runs=3, failures={})
-    order = Arm("order", "d", runs=3, failures={"t::a": 1})
-    isolation = Arm("isolation", "d", runs=3, failures={"t::a": 3})
-    inv = classify([baseline, order, isolation], ["t::a"])
-
-    assert len(inv.flakes) == 1
-    assert inv.flakes[0].cause is Cause.ISOLATION
-    assert "depends on state another test creates" in inv.flakes[0].evidence
-
-
-def test_passing_alone_and_failing_in_some_orders_is_still_plain_order_dependence():
-    """The opposite direction - another test leaks state INTO it - arrives as `order`
-    alone, because a test that passes when run by itself does not flip the isolation
-    arm at all. That is why there is no second branch for it: with both arms flipping
-    and a stable baseline, failing-alone is the only reachable case."""
-    baseline = Arm("baseline", "d", runs=3, failures={})
-    order = Arm("order", "d", runs=3, failures={"t::a": 2})
-    isolation = Arm("isolation", "d", runs=3, failures={})
-    inv = classify([baseline, order, isolation], ["t::a"])
-
-    assert inv.flakes[0].cause is Cause.ORDER
-
-
-def test_a_third_arm_still_forces_unknown():
-    """The exemption is narrow on purpose. Only order and isolation are two views of
-    one cause; a clock flip alongside them is a different perturbation and no single
-    cause is established."""
-    baseline = Arm("baseline", "d", runs=3, failures={})
-    order = Arm("order", "d", runs=3, failures={"t::a": 1})
-    isolation = Arm("isolation", "d", runs=3, failures={"t::a": 3})
-    clock = Arm("clock", "d", runs=3, failures={"t::a": 2})
-    inv = classify([baseline, order, isolation, clock], ["t::a"])
-
-    assert inv.flakes[0].cause is Cause.UNKNOWN

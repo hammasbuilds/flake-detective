@@ -16,30 +16,31 @@ interpreter randomises string hashing on every start, and the clock moves while 
 runs. Both are pinned in *every* arm - seed 0 and a fixed instant - so that the arm which
 varies one of them is the only place it varies at all. Without that the baseline flips
 whatever the other arms would have flipped, and claims it as nondeterminism.
+
+What each test did is read from pytest's own reports by an injected plugin (see
+`observe.py`), never scraped from the terminal. A test counts in a run only if it was
+observed to pass or fail there: a test that errored in a fixture is a failure, and a test
+that never ran is not a pass.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import random
-import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from flake_detective import freeze
+from flake_detective import freeze, observe
 from flake_detective.types import Arm
-
-# `-rf` prints "FAILED path::test[id] - AssertionError: ...". Matching `\S+` stops at the
-# first space, and a parametrised node id contains them: `test_counting[(x, y)-2]` is
-# captured as `test_counting[(x,`. The truncated id is stable across runs, so it never
-# produced a false flake - but two different parametrisations can truncate to the *same*
-# string, which would merge them and hide a flake in whichever one flipped.
-_SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(.+?)(?:\s+-\s.*)?$", re.MULTILINE)
 
 # Passed to every pytest invocation, collection included.
 #
@@ -47,7 +48,11 @@ _SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(.+?)(?:\s+-\s.*)?$", re.MULTILINE)
 # `random` on every run - including the baseline. The control would then vary the very
 # thing the order arm varies, and every order-dependent test in the suite would be filed
 # as nondeterminism. Blocking a plugin that is not installed is a no-op.
-_COMMON = ["-p", "no:cacheprovider", "-p", "no:randomly"]
+#
+# The cache plugin stays loaded - `--lf`, `--ff` or `--sw` in a project's addopts would be
+# unrecognised options without it - but writes to a throwaway directory, and the observe
+# plugin switches those history-driven options off.
+_COMMON = ["-p", "no:randomly", "-p", observe.PLUGIN_NAME]
 
 # Past this many characters of node ids, the order is handed over in a file instead of
 # on the command line. Windows refuses a command line over 32,767 characters, and a
@@ -56,6 +61,35 @@ _COMMON = ["-p", "no:cacheprovider", "-p", "no:randomly"]
 MAX_ARGV_CHARS = 20_000
 
 Tick = Callable[[], None]
+
+
+# --- stopping cleanly on Ctrl-C ------------------------------------------------------------
+#
+# Every child pytest is registered here while it runs, so an interrupt can kill all of
+# them - including the ones started by worker threads, which never see KeyboardInterrupt.
+_LIVE: set[subprocess.Popen] = set()
+_LIVE_LOCK = threading.Lock()
+_STOP = threading.Event()
+
+
+def stop_all() -> None:
+    """Kill every running child and refuse to start new ones until `reset()`."""
+    _STOP.set()
+    with _LIVE_LOCK:
+        procs = list(_LIVE)
+    for p in procs:
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
+def reset() -> None:
+    _STOP.clear()
+
+
+def stopping() -> bool:
+    return _STOP.is_set()
 
 
 def _env(hashseed: int, epoch: float | None) -> dict[str, str]:
@@ -74,7 +108,15 @@ def _env(hashseed: int, epoch: float | None) -> dict[str, str]:
         env[freeze.ENV_VAR] = repr(epoch)
     else:
         env.pop(freeze.ENV_VAR, None)
-    env.pop(freeze.ORDER_ENV_VAR, None)
+    for var in (
+        observe.ORDER_ENV_VAR,
+        observe.RESULTS_ENV_VAR,
+        observe.EXACT_ENV_VAR,
+        observe.SERIAL_ENV_VAR,
+    ):
+        env.pop(var, None)
+    # Distributed runs only where the parallel arm asks for them.
+    env[observe.SERIAL_ENV_VAR] = "1"
     return env
 
 
@@ -87,22 +129,58 @@ def _spawn(
     cmd: list[str], repo: Path, timeout: float, env: dict[str, str] | None = None
 ) -> tuple[int | None, str]:
     """Run a command. Returns (returncode, or None if it never finished; its output)."""
+    if _STOP.is_set():
+        return None, "interrupted"
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=repo,
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
             env=env,
-            check=False,
         )
-    except subprocess.TimeoutExpired:
-        return None, f"timed out after {timeout:g}s (raise --timeout if the suite is slow)"
     except OSError as e:
         return None, f"could not start {cmd[0]}: {e}"
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    with _LIVE_LOCK:
+        _LIVE.add(proc)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            # Short waits rather than one long one, so the main thread gets back to
+            # Python often enough for Ctrl-C to be delivered promptly.
+            try:
+                out, err = proc.communicate(
+                    timeout=min(0.5, max(deadline - time.monotonic(), 0.01))
+                )
+                break
+            except subprocess.TimeoutExpired:
+                if _STOP.is_set():
+                    proc.kill()
+                    proc.communicate()
+                    return None, "interrupted"
+                if time.monotonic() >= deadline:
+                    proc.kill()
+                    proc.communicate()
+                    return None, (
+                        f"timed out after {timeout:g}s (raise --timeout if the suite is slow)"
+                    )
+    except BaseException:
+        # KeyboardInterrupt in the main thread: take the child down with us.
+        proc.kill()
+        try:
+            proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
+        raise
+    finally:
+        with _LIVE_LOCK:
+            _LIVE.discard(proc)
+    if _STOP.is_set():
+        return None, "interrupted"
+    return proc.returncode, (out or "") + (err or "")
 
 
 def pytest_problem(python: str = "", repo: Path | None = None) -> str:
@@ -138,10 +216,78 @@ def pytest_problem(python: str = "", repo: Path | None = None) -> str:
 
 
 @dataclass
+class Observed:
+    """What one pytest run was seen to do, per test, from pytest's own reports."""
+
+    outcomes: dict[str, str] = field(default_factory=dict)
+    """node id -> passed, failed, error or skipped. Absent means it never ran."""
+
+    rootdir: str = ""
+    collected: list[str] = field(default_factory=list)
+
+    @property
+    def failed(self) -> set[str]:
+        """Failed or errored: both mean the test did not pass."""
+        return {t for t, o in self.outcomes.items() if o in ("failed", "error")}
+
+    @property
+    def errored(self) -> set[str]:
+        return {t for t, o in self.outcomes.items() if o == "error"}
+
+    @property
+    def passed(self) -> set[str]:
+        return {t for t, o in self.outcomes.items() if o == "passed"}
+
+    @property
+    def seen(self) -> set[str]:
+        """Tests observed to pass or fail. Skipped and never-run tests are not evidence."""
+        return self.failed | self.passed
+
+    def merge(self, other: Observed) -> Observed:
+        return Observed({**self.outcomes, **other.outcomes}, self.rootdir or other.rootdir)
+
+
+def _pytest(
+    python: str,
+    args: list[str],
+    repo: Path,
+    timeout: float,
+    env: dict[str, str],
+) -> tuple[int | None, str, dict | None]:
+    """Run pytest with the observe plugin. (returncode, output, the plugin's JSON or None)."""
+    fd, results = tempfile.mkstemp(prefix="flake-results-", suffix=".json")
+    os.close(fd)
+    os.unlink(results)  # absent until the plugin writes it, so a crash is detectable
+    cache = tempfile.mkdtemp(prefix="flake-cache-")
+    env = {**env, observe.RESULTS_ENV_VAR: results}
+    cmd = [python or sys.executable, "-m", "pytest", "-o", f"cache_dir={cache}", *args]
+    try:
+        code, out = _spawn(cmd, repo, timeout, env=env)
+        data = None
+        if os.path.exists(results):
+            try:
+                with open(results, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                data = None
+        return code, out, data
+    finally:
+        for p in (results,):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        shutil.rmtree(cache, ignore_errors=True)
+
+
+@dataclass
 class Collection:
     tests: list[str]
     returncode: int | None
     output: str
+    rootdir: str = ""
+    """pytest's rootdir. Node ids are relative to it, not to the directory pytest was
+    started in - which is why they are made absolute before being passed back."""
 
     @property
     def error(self) -> str:
@@ -169,18 +315,19 @@ def collect_detailed(
     repo: Path, target: str = "", timeout: float = 300.0, python: str = ""
 ) -> Collection:
     """Every test id the suite contains, without running any of them - and if none, why."""
-    cmd = [python or sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header"]
-    cmd += _COMMON
+    args = ["--collect-only", "-q", "--no-header", *_COMMON]
     if target:
-        cmd.append(target)
-    code, out = _spawn(cmd, repo, timeout, env=_env(0, None))
+        args.append(target)
+    code, out, data = _pytest(python, args, repo, timeout, _env(0, None))
     tests: list[str] = []
-    if code is not None:
-        for line in out.splitlines():
-            line = line.strip()
-            if "::" in line and not line.startswith(("=", "-", "ERROR", "FAILED")):
-                tests.append(line)
-    return Collection(tests, code, out)
+    rootdir = ""
+    if data:
+        tests = list(data.get("collected") or [])
+        rootdir = data.get("rootdir") or ""
+    elif code == 0:
+        code = -1
+        out = "the flake-detective plugin reported nothing:\n" + out
+    return Collection(tests, code, out, rootdir)
 
 
 def collect(repo: Path, target: str = "", timeout: float = 300.0, python: str = "") -> list[str]:
@@ -189,7 +336,21 @@ def collect(repo: Path, target: str = "", timeout: float = 300.0, python: str = 
     return [] if c.error else c.tests
 
 
-def run_once_detailed(
+def _as_arg(test_id: str, rootdir: str) -> str:
+    """A node id as a command-line argument that means the same thing from any directory.
+
+    Node ids are relative to pytest's rootdir, and pytest resolves arguments relative to
+    the directory it runs in. When REPO is a subfolder of the project - `mono/pkg` with
+    the pytest.ini in `mono` - the two differ, and every id passed back named a file that
+    does not exist: "file or directory not found: pkg/tests/test_m.py::test_a".
+    """
+    if not rootdir:
+        return test_id
+    path, sep, rest = test_id.partition("::")
+    return os.path.join(rootdir, path) + sep + rest
+
+
+def run_observed(
     repo: Path,
     target: str = "",
     order: list[str] | None = None,
@@ -199,32 +360,37 @@ def run_once_detailed(
     python: str = "",
     extra_env: dict[str, str] | None = None,
     extra_args: list[str] | None = None,
-) -> tuple[set[str] | None, str]:
-    """(the failed test ids, or None if the run could not be scored; and why not)."""
-    cmd = [python or sys.executable, "-m", "pytest", "-q", "--no-header", "--tb=no", "-rf"]
-    cmd += _COMMON
+    rootdir: str = "",
+) -> tuple[Observed | None, str]:
+    """(what each test did, or None if the run could not be scored; and why not)."""
+    args = ["-q", "--no-header", "--tb=no", *_COMMON]
     if epoch is not None:
-        cmd += ["-p", freeze.PLUGIN_NAME]
+        args += ["-p", freeze.PLUGIN_NAME]
+    if rootdir:
+        args.append(f"--rootdir={rootdir}")
     if extra_args:
-        cmd += extra_args
+        args += extra_args
 
     env = {**_env(hashseed, epoch), **(extra_env or {})}
     order_file = None
-    if order and sum(len(t) + 1 for t in order) > MAX_ARGV_CHARS:
-        # Too long for a command line: collect as usual and let a plugin put the
-        # items in this order. Same tests, same order, no argv limit.
+    if order and sum(len(t) + 1 + len(rootdir) for t in order) > MAX_ARGV_CHARS:
+        # Too long for a command line: collect as usual and let the plugin keep exactly
+        # these items, in this order. Same tests, same order, no argv limit - and the
+        # ids are matched as pytest produces them, so the rootdir does not matter.
         fd, order_file = tempfile.mkstemp(prefix="flake-order-", suffix=".txt")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write("\n".join(order))
-        env[freeze.ORDER_ENV_VAR] = order_file
-        cmd += ["-p", freeze.ORDER_PLUGIN_NAME]
+        env[observe.ORDER_ENV_VAR] = order_file
+        env[observe.EXACT_ENV_VAR] = "1"
         if target:
-            cmd.append(target)
-    else:
-        cmd.extend(order if order else ([target] if target else []))
+            args.append(target)
+    elif order:
+        args.extend(_as_arg(t, rootdir) for t in order)
+    elif target:
+        args.append(target)
 
     try:
-        code, out = _spawn(cmd, repo, timeout, env=env)
+        code, out, data = _pytest(python, args, repo, timeout, env)
     finally:
         if order_file:
             try:
@@ -237,10 +403,33 @@ def run_once_detailed(
     if code == 5:
         return None, "pytest collected nothing (exit status 5)"
     if code not in (0, 1):
-        # 2 is an internal error, 3 an interrupt: a run that fell over is not evidence
-        # that every test in it failed.
+        # 2 is an internal error or a collection error, 3 an interrupt, 4 a usage error:
+        # a run that fell over is not evidence that every test in it failed.
         return None, f"pytest exited with status {code}:\n{_tail(out)}"
-    return set(_SUMMARY.findall(out)), ""
+    if data is None:
+        return None, f"pytest exited {code} but the flake-detective plugin wrote nothing:\n" + (
+            _tail(out)
+        )
+    return Observed(dict(data.get("outcomes") or {}), data.get("rootdir") or ""), ""
+
+
+def run_once_detailed(
+    repo: Path,
+    target: str = "",
+    order: list[str] | None = None,
+    hashseed: int = 0,
+    epoch: float | None = None,
+    timeout: float = 900.0,
+    python: str = "",
+    extra_env: dict[str, str] | None = None,
+    extra_args: list[str] | None = None,
+    rootdir: str = "",
+) -> tuple[set[str] | None, str]:
+    """(the failed or errored test ids, or None if the run could not be scored; and why not)."""
+    obs, why = run_observed(
+        repo, target, order, hashseed, epoch, timeout, python, extra_env, extra_args, rootdir
+    )
+    return (None if obs is None else obs.failed), why
 
 
 def run_once(
@@ -253,19 +442,22 @@ def run_once(
     python: str = "",
     extra_env: dict[str, str] | None = None,
     extra_args: list[str] | None = None,
+    rootdir: str = "",
 ) -> set[str] | None:
-    """The set of test ids that failed. None if the run could not be scored at all."""
+    """The set of test ids that failed or errored. None if the run could not be scored."""
     return run_once_detailed(
-        repo, target, order, hashseed, epoch, timeout, python, extra_env, extra_args
+        repo, target, order, hashseed, epoch, timeout, python, extra_env, extra_args, rootdir
     )[0]
 
 
-def _tally(arm: Arm, failed: set[str] | None) -> None:
-    if failed is None:
-        return
+def _tally(arm: Arm, obs: Observed) -> None:
     arm.runs += 1
-    for t in failed:
+    for t in obs.seen:
+        arm.observed[t] = arm.observed.get(t, 0) + 1
+    for t in obs.failed:
         arm.failures[t] = arm.failures.get(t, 0) + 1
+    for t in obs.errored:
+        arm.errors[t] = arm.errors.get(t, 0) + 1
 
 
 def execute(
@@ -274,44 +466,68 @@ def execute(
     jobs: int = 1,
     tick: Tick | None = None,
 ) -> Arm:
-    """Score an arm. Each run is one or more `run_once` calls whose failures are unioned.
+    """Score an arm. Each run is one or more pytest calls whose observations are merged.
 
     Almost every run is a single pytest invocation; an isolation pass is one per test.
     The invocations are independent processes, so with `jobs` above one they go
     through a pool - which is sound only for a suite whose tests do not share a fixed
     file, port or database across processes. That is the caller's call, and it is off
     by default.
+
+    Ctrl-C stops the arm: running children are killed, and the runs that had already
+    finished are still scored, with `arm.interrupted` set.
     """
     units = [(i, kw) for i, calls in enumerate(runs) for kw in calls]
-    results: dict[int, list[set[str] | None]] = {i: [] for i in range(len(runs))}
+    results: dict[int, list[Observed | None]] = {i: [] for i in range(len(runs))}
 
-    def one(unit: tuple[int, dict]) -> tuple[int, tuple[set[str] | None, str]]:
+    def one(unit: tuple[int, dict]) -> tuple[int, tuple[Observed | None, str]]:
         i, kw = unit
-        return i, run_once_detailed(**kw)
+        return i, run_observed(**kw)
 
-    def record(i: int, res: tuple[set[str] | None, str]) -> None:
-        failed, why = res
-        results[i].append(failed)
-        if failed is None and why and not arm.error:
+    def record(i: int, res: tuple[Observed | None, str]) -> None:
+        obs, why = res
+        if stopping():
+            return
+        results[i].append(obs)
+        if obs is None and why and not arm.error:
             arm.error = why
         if tick:
             tick()
 
-    if jobs <= 1 or len(units) <= 1:
-        for u in units:
-            record(*one(u))
-    else:
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            for fut in as_completed([pool.submit(one, u) for u in units]):
-                record(*fut.result())
+    try:
+        if jobs <= 1 or len(units) <= 1:
+            for u in units:
+                record(*one(u))
+        else:
+            pool = ThreadPoolExecutor(max_workers=jobs)
+            try:
+                pending = {pool.submit(one, u) for u in units}
+                while pending:
+                    # Polled, not a blocking wait: on Windows an untimed wait on a lock
+                    # does not return for Ctrl-C.
+                    done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        record(*fut.result())
+            except BaseException:
+                stop_all()
+                raise
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)
+    except KeyboardInterrupt:
+        stop_all()
+        arm.interrupted = True
 
-    arm.attempted += len(runs)
-    for i in range(len(runs)):
+    finished = [i for i in range(len(runs)) if len(results[i]) == len(runs[i])]
+    arm.attempted += len(runs) if not arm.interrupted else len(finished)
+    for i in finished:
         scored = [r for r in results[i] if r is not None]
         # One unscoreable test does not invalidate an isolation pass, but a pass where
         # nothing could be scored is not evidence and must not count as a run.
         if scored:
-            _tally(arm, set().union(*scored))
+            merged = scored[0]
+            for r in scored[1:]:
+                merged = merged.merge(r)
+            _tally(arm, merged)
     return arm
 
 
@@ -346,15 +562,29 @@ def order_arm(
     python: str = "",
     jobs: int = 1,
     tick: Tick | None = None,
+    rootdir: str = "",
 ) -> Arm:
-    """The same tests, shuffled. Flips here mean one test leaves state for another."""
+    """The same tests, shuffled. Flips here mean one test's result depends on another's.
+
+    `rootdir` is pytest's rootdir from collection; node ids are relative to it."""
     arm = Arm("order", "the same tests, shuffled")
     rnd = random.Random(seed)
     plan = []
     for _ in range(runs):
         shuffled = list(tests)
         rnd.shuffle(shuffled)
-        plan.append(_call(repo, target, timeout, python, order=shuffled, hashseed=0, epoch=epoch))
+        plan.append(
+            _call(
+                repo,
+                target,
+                timeout,
+                python,
+                order=shuffled,
+                hashseed=0,
+                epoch=epoch,
+                rootdir=rootdir,
+            )
+        )
     return execute(arm, plan, jobs, tick)
 
 
@@ -577,8 +807,9 @@ def parallel_arm(
 
     Note what this arm does NOT control. Under -n, tests are distributed rather
     than merely reordered, so a flip here could in principle be order dependence
-    instead. The order arm exists to rule that out: a test that flips in both is
-    reported as UNKNOWN rather than credited to parallelism.
+    instead. The classifier reads it that way: a test the order or isolation arm also
+    implicates is reported as an order dependence, with this arm as corroboration, and
+    only a flip seen here alone is credited to parallelism.
     """
     arm = Arm("parallel", f"the suite spread across {workers} worker processes")
     plan = [
@@ -590,6 +821,7 @@ def parallel_arm(
             hashseed=0,
             epoch=epoch,
             extra_args=["-n", str(workers)],
+            extra_env={observe.SERIAL_ENV_VAR: "0"},
         )
         for _ in range(runs)
     ]
@@ -606,6 +838,7 @@ def isolation_arm(
     tests: list[str] | None = None,
     jobs: int = 1,
     tick: Tick | None = None,
+    rootdir: str = "",
 ) -> Arm:
     """Every test run ALONE, in its own process.
 
@@ -630,7 +863,12 @@ def isolation_arm(
     if not tests:
         return arm
     plan = [
-        [_call(repo, target, timeout, python, order=[t], hashseed=0, epoch=epoch)[0] for t in tests]
+        [
+            _call(
+                repo, target, timeout, python, order=[t], hashseed=0, epoch=epoch, rootdir=rootdir
+            )[0]
+            for t in tests
+        ]
         for _ in range(runs)
     ]
     return execute(arm, plan, jobs, tick)

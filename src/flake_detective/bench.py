@@ -50,7 +50,10 @@ def run(
         say(f"fixture: {len(fixture.FILES)} files, {len(fixture.TRUTH)} tests, {runs} runs/arm")
 
         inv = investigate(
-            repo, "", Options(runs=runs, timeout=timeout, python=python, jobs=jobs), progress=say
+            repo,
+            "",
+            Options(runs=runs, timeout=timeout, python=python, jobs=jobs, order_seed=0),
+            progress=say,
         )
 
     if not inv.ok:

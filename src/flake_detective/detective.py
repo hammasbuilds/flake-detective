@@ -9,15 +9,16 @@ because a test that flips under identical conditions also flips when the order c
 
 from __future__ import annotations
 
+import random
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from flake_detective import freeze
 from flake_detective import run as arms_mod
-from flake_detective.classify import classify
-from flake_detective.types import Arm, Investigation
+from flake_detective.classify import UNDIRECTED, classify
+from flake_detective.types import Arm, Cause, Investigation
 
 ARMS = ("order", "hashseed", "clock")
 
@@ -46,7 +47,10 @@ class Options:
 
     timeout: float = 900.0
     arms: tuple[str, ...] = ARMS
-    order_seed: int = 0
+    order_seed: int | None = None
+    """Seed for the order arm's shuffles. None picks one at random, and the report prints
+    it, so a finding can be reproduced exactly with --seed."""
+
     python: str = ""
     """The interpreter to run the target suite with. Defaults to this one.
 
@@ -131,6 +135,17 @@ class _Progress:
         )
 
 
+@dataclass
+class _State:
+    """How far an investigation got - so Ctrl-C can still report what finished."""
+
+    started: float
+    seed: int
+    tests: list[str] = field(default_factory=list)
+    built: list[Arm] = field(default_factory=list)
+    inv: Investigation | None = None
+
+
 def investigate(
     repo: Path,
     target: str = "",
@@ -141,10 +156,39 @@ def investigate(
 
     `progress`, if given, is called as progress(message) for each stage and as
     progress(message, transient=True) after every pytest run.
+
+    Ctrl-C does not lose the work done: running pytest processes are killed, and the
+    result holds whatever finished, with `interrupted` set.
     """
     opts = opts or Options()
+    seed = opts.order_seed if opts.order_seed is not None else random.randrange(1, 2**31)
+    state = _State(started=time.time(), seed=seed)
+    arms_mod.reset()
+    try:
+        inv = _investigate(repo, target, opts, progress, state)
+    except KeyboardInterrupt:
+        arms_mod.stop_all()
+        inv = state.inv
+        if inv is None:
+            if state.tests and state.built and any(a.runs for a in state.built):
+                inv = classify(state.built, state.tests)
+            else:
+                inv = Investigation(
+                    arms=state.built,
+                    total_tests=len(state.tests),
+                    problem="interrupted before any run finished, so nothing was examined",
+                )
+        inv.interrupted = True
+    finally:
+        arms_mod.reset()
+    inv.seed = seed
+    inv.seconds = time.time() - state.started
+    return inv
+
+
+def _investigate(repo: Path, target: str, opts: Options, progress, state: _State) -> Investigation:
     say = progress or (lambda *_a, **_k: None)
-    started = time.time()
+    started = state.started
     epoch = freeze.BASELINE_EPOCH if opts.freeze_clock else None
 
     def failed(problem: str, total: int = 0) -> Investigation:
@@ -162,6 +206,8 @@ def investigate(
         # would not import. Say which it is, in pytest's own words.
         return failed(collection.error, len(collection.tests))
     tests = collection.tests
+    rootdir = collection.rootdir
+    state.tests = tests
     say(f"collected {len(tests)} tests")
 
     # Decide every arm before running any, so the progress line can count down to
@@ -182,7 +228,7 @@ def investigate(
                 n,
                 f"{n} shuffled runs",
                 lambda tick: arms_mod.order_arm(
-                    repo, target, tests, n, t, epoch, opts.order_seed, py, jobs, tick
+                    repo, target, tests, n, t, epoch, state.seed, py, jobs, tick, rootdir
                 ),
             )
         )
@@ -249,7 +295,7 @@ def investigate(
                 n * len(tests),
                 f"{n} passes, {len(tests)} processes each",
                 lambda tick: arms_mod.isolation_arm(
-                    repo, target, n, t, epoch, py, tests, jobs, tick
+                    repo, target, n, t, epoch, py, tests, jobs, tick, rootdir
                 ),
             )
         )
@@ -269,11 +315,13 @@ def investigate(
             )
 
     bar = _Progress(say, sum(units for _, units, _, _ in plan))
-    built: list[Arm] = []
+    built = state.built
     for name, units, what, go in plan:
         bar.start(name, units, what)
         arm = go(bar.tick)
         built.append(arm)
+        if arm.interrupted:
+            raise KeyboardInterrupt
         if name == "baseline" and not arm.runs:
             # Nothing to compare the other arms against, so do not spend their runs.
             inv = Investigation(arms=built, total_tests=len(tests))
@@ -286,17 +334,49 @@ def investigate(
             return inv
 
     inv = classify(built, tests)
+    state.inv = inv
 
     if opts.localise:
         from flake_detective.localise import localise as _localise
-        from flake_detective.types import Cause
 
-        order_flakes = [f for f in inv.flakes if f.cause is Cause.ORDER]
-        for flake in order_flakes:
-            say(f"localising: bisecting for what {flake.test_id} trips over")
-            found = _localise(repo, flake.test_id, tests, t, py, epoch=epoch)
-            flake.culprits = found.culprits
-            say(f"  {found.describe()}  ({found.probes} runs)")
+        for flake in [f for f in inv.flakes if f.cause in (Cause.ORDER, Cause.NEEDS_TEST)]:
+            say(f"localising: bisecting for the test {flake.test_id} depends on")
+            found = _localise(
+                repo, flake.test_id, tests, t, py, epoch=epoch, target=target, rootdir=rootdir
+            )
+            if arms_mod.stopping():
+                raise KeyboardInterrupt
+            flake.localisation = found.as_dict()
+            _apply(flake, found)
+            say(f"  {found.describe()}")
 
     inv.seconds = time.time() - started
     return inv
+
+
+def _apply(flake, found) -> None:
+    """Fold a localisation into the finding it was run for.
+
+    The one run alone fixes the direction, which the order arm on its own cannot. When the
+    classifier had already established a direction from the isolation arm and this one run
+    disagrees, the finding is left as it was and the disagreement is visible in the
+    localisation summary beside it - one probe does not overrule seven runs.
+    """
+    if found.direction == "needs":
+        if flake.cause is Cause.ORDER and not flake.directed:
+            flake.cause = Cause.NEEDS_TEST
+            flake.directed = True
+            flake.evidence = flake.evidence.replace(
+                UNDIRECTED, ": run alone it fails (--localise), so it relies on another test"
+            )
+        if flake.cause is Cause.NEEDS_TEST:
+            flake.culprits = found.culprits
+    elif found.direction == "broken":
+        if flake.cause is Cause.ORDER and not flake.directed:
+            flake.directed = True
+            flake.evidence = flake.evidence.replace(
+                UNDIRECTED,
+                ": run alone it passes (--localise), so another test leaves state that breaks it",
+            )
+        if flake.cause is Cause.ORDER:
+            flake.culprits = found.culprits

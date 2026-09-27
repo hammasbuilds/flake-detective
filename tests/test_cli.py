@@ -124,6 +124,14 @@ def test_a_venv_directory_is_accepted_as_the_interpreter(tmp_path):
     assert Path(got) == exe.resolve()
 
 
+def _err_only(capsys) -> str:
+    """An error report goes to stderr, and nothing goes to stdout: a script capturing
+    stdout must not mistake "nothing was examined" for findings."""
+    cap = capsys.readouterr()
+    assert cap.out.strip() == "", cap.out
+    return cap.err
+
+
 def test_a_file_as_repo_suggests_the_target_form(tmp_path, capsys):
     f = tmp_path / "test_x.py"
     f.write_text("def test_a():\n    pass\n", encoding="utf-8")
@@ -134,7 +142,7 @@ def test_a_file_as_repo_suggests_the_target_form(tmp_path, capsys):
 
 def test_an_empty_directory_exits_nonzero_and_says_why(tmp_path, capsys):
     code = main(["investigate", str(tmp_path), "--fail-on-flake", "--quiet"])
-    out = capsys.readouterr().out
+    out = _err_only(capsys)
     assert code == 2
     assert "NOTHING WAS EXAMINED" in out
     assert "no tests" in out
@@ -145,7 +153,7 @@ def test_a_collection_error_exits_nonzero_and_names_the_file(tmp_path, capsys):
     (tmp_path / "test_broken.py").write_text("import a_module_that_is_not_there\n", "utf-8")
     (tmp_path / "test_fine.py").write_text("def test_ok():\n    pass\n", "utf-8")
     code = main(["investigate", str(tmp_path), "--quiet", "--runs", "2"])
-    out = capsys.readouterr().out
+    out = _err_only(capsys)
     assert code == 2
     assert "errors while collecting" in out
     assert "test_broken.py" in out
@@ -156,7 +164,7 @@ def test_a_nonexistent_target_exits_nonzero(tmp_path, capsys):
     (tmp_path / "test_fine.py").write_text("def test_ok():\n    pass\n", "utf-8")
     code = main(["investigate", str(tmp_path), "tests/nothing_here.py", "--quiet"])
     assert code == 2
-    assert "NOTHING WAS EXAMINED" in capsys.readouterr().out
+    assert "NOTHING WAS EXAMINED" in _err_only(capsys)
 
 
 def test_a_baseline_that_never_scores_is_an_error(tmp_path, capsys):
@@ -171,7 +179,7 @@ def test_a_baseline_that_never_scores_is_an_error(tmp_path, capsys):
     )
     (tmp_path / "test_fine.py").write_text("def test_ok():\n    pass\n", "utf-8")
     code = main(["investigate", str(tmp_path), "--quiet", "--runs", "2", "--arms", "order"])
-    out = capsys.readouterr().out
+    out = _err_only(capsys)
     assert code == 2
     assert "none of the 2 baseline runs could be scored" in out
     assert "exited with status 3" in out
@@ -194,7 +202,7 @@ def python_without_pytest(tmp_path_factory) -> Path:
 def test_missing_pytest_fails_loudly_in_investigate(tmp_path, capsys, python_without_pytest):
     (tmp_path / "test_fine.py").write_text("def test_ok():\n    pass\n", "utf-8")
     code = main(["investigate", str(tmp_path), "--quiet", "--python", str(python_without_pytest)])
-    out = capsys.readouterr().out
+    out = _err_only(capsys)
     assert code == 2
     assert "pytest is not importable" in out
     assert "-m pip install pytest" in out
@@ -203,7 +211,7 @@ def test_missing_pytest_fails_loudly_in_investigate(tmp_path, capsys, python_wit
 
 def test_missing_pytest_fails_loudly_in_bench(capsys, python_without_pytest):
     code = main(["bench", "--quiet", "--runs", "2", "--python", str(python_without_pytest)])
-    out = capsys.readouterr().out
+    out = _err_only(capsys)
     assert code == 2
     assert "BENCHMARK DID NOT RUN" in out
     assert "detection" not in out
@@ -230,3 +238,35 @@ def test_json_is_written_for_a_failed_investigation_too(tmp_path, capsys):
     got = json.loads(out.read_text(encoding="utf-8"))
     assert got["ok"] is False
     assert "no tests" in got["problem"]
+
+
+def test_a_file_as_repo_suggests_the_project_not_the_files_own_folder(
+    tmp_path, capsys, monkeypatch
+):
+    """`investigate stable/tests/test_ok.py` used to suggest
+    `investigate stable/tests test_ok.py`, which moves pytest's rootdir, the conftest
+    files it loads and what relative paths in the tests resolve against."""
+    tests = tmp_path / "stable" / "tests"
+    tests.mkdir(parents=True)
+    (tests / "test_ok.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert main(["investigate", str(Path("stable") / "tests" / "test_ok.py")]) == 2
+    err = capsys.readouterr().err
+    assert "investigate stable tests/test_ok.py" in err, err
+
+    (tmp_path / "stable" / "pyproject.toml").write_text("[project]\nname='x'\n", "utf-8")
+    deeper = tests / "unit"
+    deeper.mkdir()
+    (deeper / "test_u.py").write_text("def test_u():\n    pass\n", encoding="utf-8")
+    assert main(["investigate", str(deeper / "test_u.py")]) == 2
+    err = capsys.readouterr().err
+    assert "investigate stable tests/unit/test_u.py" in err, err
+
+
+def test_the_seed_is_printed_and_can_be_given(tmp_path, capsys):
+    (tmp_path / "test_o.py").write_text("def test_a():\n    pass\n", "utf-8")
+    args = ["investigate", str(tmp_path), "--quiet", "--runs", "2", "--arms", "order"]
+    assert main([*args, "--seed", "1234"]) == 0
+    assert "order seed 1234 (--seed 1234 repeats these shuffles)" in capsys.readouterr().out
+    assert main(args) == 0
+    assert "order seed " in capsys.readouterr().out

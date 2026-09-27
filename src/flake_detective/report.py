@@ -16,7 +16,21 @@ from pathlib import Path
 
 from flake_detective.types import Cause, Investigation
 
-ORDER = [Cause.ORDER, Cause.HASH_SEED, Cause.CLOCK, Cause.NONDETERMINISM, Cause.UNKNOWN]
+# Every cause, most actionable first. Built from the enum and checked against it, because
+# a hand-kept list of five went stale when four arms were added: under --arms all the
+# headline said "9 flaky tests" and listed four of them.
+ORDER = [
+    Cause.ORDER,
+    Cause.NEEDS_TEST,
+    Cause.HASH_SEED,
+    Cause.CLOCK,
+    Cause.TIMEZONE,
+    Cause.LOCALE,
+    Cause.PARALLEL,
+    Cause.NONDETERMINISM,
+    Cause.UNKNOWN,
+]
+assert set(ORDER) == set(Cause), "report.ORDER must list every Cause"
 
 
 def _short(test_id: str, width: int = 52) -> str:
@@ -32,7 +46,10 @@ def text(inv: Investigation) -> str:
 
     if inv.problem:
         out.append("")
-        out.append("NOTHING WAS EXAMINED - this is an error, not a clean result.")
+        if inv.interrupted:
+            out.append("INTERRUPTED - nothing was examined.")
+        else:
+            out.append("NOTHING WAS EXAMINED - this is an error, not a clean result.")
         out.append("")
         out.extend(inv.problem.splitlines())
         return "\n".join(out)
@@ -44,11 +61,19 @@ def text(inv: Investigation) -> str:
         return "\n".join(out)
 
     out.append(f"{inv.total_tests} tests, {len(inv.arms)} arms, {inv.seconds:.0f}s")
+    if inv.seed is not None and any(a.name == "order" for a in inv.arms):
+        out.append(f"order seed {inv.seed} (--seed {inv.seed} repeats these shuffles)")
     out.append("")
+    if inv.interrupted:
+        out.append("INTERRUPTED (Ctrl-C). What follows is from the runs that finished; arms")
+        out.append("that had not started are missing, and fewer runs can see less.")
+        out.append("")
 
     names = [a.name for a in inv.arms]
     for a in inv.arms:
         runs = f"{a.runs} runs" if not a.unscored else f"{a.runs} of {a.attempted} runs"
+        if a.interrupted:
+            runs += " (cut short)"
         out.append(f"  {a.name:<10} {runs:<14} {a.description}")
     out.append("")
 
@@ -71,7 +96,9 @@ def text(inv: Investigation) -> str:
 
     if not inv.flakes:
         per_arm = min((a.runs for a in inv.arms if a.runs), default=0)
-        if inv.incomplete:
+        if inv.interrupted:
+            out.append(f"No flaky tests found in the runs that finished ({per_arm}+ per arm).")
+        elif inv.incomplete:
             out.append(f"No flaky tests found by the arms that ran ({per_arm}+ runs each).")
         else:
             out.append(f"No flaky tests found across {per_arm} runs per arm.")
@@ -96,6 +123,9 @@ def text(inv: Investigation) -> str:
             if counts.get(c.value):
                 out.append(f"  {counts[c.value]:>3}  {c.value}")
         out.append("")
+        out.append("Rates are failures over the runs that observed the test; - means an arm")
+        out.append("never saw it pass or fail. Setup and teardown errors count as failures.")
+        out.append("")
         out.append("-" * 74)
         header = f"{'test':<54}" + "".join(f"{n[:8]:>9}" for n in names)
         out.append(header)
@@ -104,23 +134,41 @@ def text(inv: Investigation) -> str:
         rank = {c: i for i, c in enumerate(ORDER)}
         for f in sorted(inv.flakes, key=lambda f: (rank.get(f.cause, 9), f.test_id)):
             row = f"{_short(f.test_id):<54}"
-            row += "".join(f"{f.rates.get(n, 0.0):>9.1f}" for n in names)
+            row += "".join(f"{f.rates[n]:>9.1f}" if n in f.rates else f"{'-':>9}" for n in names)
             out.append(row)
-            out.append(f"    {f.cause.value.upper()}: {f.evidence}")
+            label = f.cause.value.upper()
+            if f.cause is Cause.ORDER and not f.directed:
+                label += " (direction undetermined)"
+            out.append(f"    {label}: {f.evidence}")
+            if f.errored:
+                out.append("    (some failures were errors in fixture setup or teardown)")
             if f.culprits:
-                # The cause names the victim, which is the innocent half of the
-                # pair. This is the half worth opening.
+                # The cause names this test; this names the other half of the pair,
+                # which is usually the one worth opening.
+                what = "needs" if f.cause is Cause.NEEDS_TEST else "caused by"
                 if len(f.culprits) == 1:
-                    out.append(f"    caused by: {f.culprits[0]}")
+                    out.append(f"    {what}: {f.culprits[0]}")
                 else:
                     out.append(
-                        f"    caused by these {len(f.culprits)} together "
-                        f"(no single one was enough):"
+                        f"    {what} these {len(f.culprits)} together (no single one was enough):"
                     )
                     for c in f.culprits:
                         out.append(f"      {c}")
+            if f.localisation:
+                out.append(f"    localise: {f.localisation['summary']}")
             out.append(f"    fix: {f.fix}")
             out.append("")
+
+    if inv.unobserved:
+        out.append("-" * 74)
+        out.append(
+            f"{len(inv.unobserved)} tests never passed or failed in any run (skipped, or "
+            "never reached) - not judged:"
+        )
+        for t in inv.unobserved[:10]:
+            out.append(f"  {_short(t, 68)}")
+        if len(inv.unobserved) > 10:
+            out.append(f"  ... and {len(inv.unobserved) - 10} more")
 
     if inv.always_failed:
         out.append("-" * 74)
@@ -137,12 +185,15 @@ def as_json(inv: Investigation) -> dict:
     return {
         "total_tests": inv.total_tests,
         "seconds": round(inv.seconds, 1),
+        "seed": inv.seed,
+        "interrupted": inv.interrupted,
         "arms": [
             {
                 "name": a.name,
                 "description": a.description,
                 "runs": a.runs,
                 "attempted": a.attempted,
+                **({"interrupted": True} if a.interrupted else {}),
                 **({"error": a.error} if a.error else {}),
             }
             for a in inv.arms
@@ -150,6 +201,7 @@ def as_json(inv: Investigation) -> dict:
         "by_cause": inv.by_cause(),
         "flakes": [f.as_row() for f in inv.flakes],
         "always_failed": inv.always_failed,
+        "unobserved": inv.unobserved,
         "ok": inv.ok,
         "problem": inv.problem or None,
         "incomplete_arms": inv.incomplete,

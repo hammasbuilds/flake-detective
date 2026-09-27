@@ -7,6 +7,10 @@ Exit status, for every subcommand:
     2   nothing could be examined, or not all of it: bad arguments, pytest missing
         from the target interpreter, a collection error, no tests, or an arm where
         no run could be scored. Never a clean result.
+    130 interrupted with Ctrl-C; whatever finished is still reported.
+
+The report goes to stdout. When nothing could be examined it is an error message, and goes
+to stderr like every other one.
 """
 
 from __future__ import annotations
@@ -22,13 +26,16 @@ from flake_detective import fixture as fixture_mod
 from flake_detective import report as report_mod
 from flake_detective.detective import ALL_ARMS, ARMS, EXTRA_ARMS, Options, investigate
 
-EXIT_OK, EXIT_FLAKY, EXIT_ERROR = 0, 1, 2
+EXIT_OK, EXIT_FLAKY, EXIT_ERROR, EXIT_INTERRUPTED = 0, 1, 2, 130
 
 EPILOG = """\
 exit status: 0 ran cleanly; 1 flaky tests found with --fail-on-flake;
 2 nothing (or not everything) could be examined - bad arguments, pytest
-missing, a collection error, no tests, or an arm with no scoreable run.
+missing, a collection error, no tests, or an arm with no scoreable run;
+130 interrupted (Ctrl-C), with the runs that finished still reported.
 """
+
+_PROJECT_MARKERS = ("pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg", "setup.py", ".git")
 
 
 class _Say:
@@ -115,6 +122,38 @@ def _resolve_python(text: str) -> tuple[str, str]:
     return "", f"--python {text}: no such interpreter"
 
 
+def _seed(text: str) -> int:
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+
+
+def _file_hint(path: Path) -> str:
+    """The command to run when a test FILE was given as REPO.
+
+    REPO is where pytest runs, and so decides the rootdir, which conftest files load and
+    what relative paths in the tests resolve against. Suggesting the file's own directory
+    - `investigate stable/tests test_ok.py` - quietly changed all three. The project is the
+    nearest directory above with pytest configuration or a .git; failing that, the parent
+    of a tests/ folder; failing that, the file's directory.
+    """
+    here = path.resolve().parent
+    root = None
+    for d in (here, *here.parents):
+        if any((d / m).exists() for m in _PROJECT_MARKERS):
+            root = d
+            break
+    if root is None:
+        root = here.parent if here.name.lower() in ("tests", "test", "testing") else here
+    try:
+        shown_root = os.path.relpath(root)
+    except ValueError:  # another drive on Windows
+        shown_root = str(root)
+    rel = os.path.relpath(path.resolve(), root).replace(os.sep, "/")
+    return f"  flake-detective investigate {shown_root} {rel}"
+
+
 def _runs_help(default: int) -> str:
     # Every literal % in argparse help has to be written %%: help strings are
     # %-formatted, and a bare one crashed --help on Python 3.11-3.13.
@@ -193,6 +232,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not pin the wall clock; disables the clock arm",
     )
+    inv.add_argument(
+        "--seed",
+        type=_seed,
+        default=None,
+        help="seed for the order arm's shuffles (default: a random one, printed in the "
+        "report, so any run can be repeated exactly)",
+    )
     inv.add_argument("--json", type=Path, metavar="FILE", help="also write the findings here")
     inv.add_argument(
         "--fail-on-flake",
@@ -202,8 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument(
         "--localise",
         action="store_true",
-        help="bisect each order dependence to name the earlier test that causes it "
-        "(costs about log2(n) extra runs per order-dependent test)",
+        help="bisect each order dependence to name the other test involved, and say "
+        "whether it breaks this one or this one needs it (costs about log2(n) extra runs "
+        "per order-dependent test)",
     )
     inv.add_argument("--quiet", action="store_true", help="no progress on stderr")
 
@@ -251,6 +298,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        # Reached only when Ctrl-C lands outside an investigation (which handles its own
+        # and reports what finished). No traceback: the user asked it to stop.
+        from flake_detective import run as run_mod
+
+        run_mod.stop_all()
+        print("\ninterrupted", file=sys.stderr)
+        return EXIT_INTERRUPTED
+
+
+def _main(argv: list[str] | None = None) -> int:
     p = build_parser()
     a = p.parse_args(argv)
 
@@ -282,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
             out = bench_mod.text(res)
         if say:
             say.done()
-        print(out)
+        print(out, file=sys.stderr if "error" in res else sys.stdout)
         if a.json:
             bench_mod.write_json(res, a.json)
             print(f"\nwrote {a.json}")
@@ -293,9 +353,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
     if not a.repo.is_dir():
         print(
-            f"error: {a.repo} is a file. REPO is the project directory; to narrow to one "
-            f"file, pass it as TARGET:\n"
-            f"  flake-detective investigate {a.repo.parent or '.'} {a.repo.name}",
+            f"error: {a.repo} is a file. REPO is the project directory (pytest runs "
+            f"there); to narrow to one file, pass it as TARGET:\n{_file_hint(a.repo)}",
             file=sys.stderr,
         )
         return EXIT_ERROR
@@ -317,17 +376,28 @@ def main(argv: list[str] | None = None) -> int:
             jobs=a.jobs,
             freeze_clock=not a.no_freeze_clock,
             localise=a.localise,
+            order_seed=a.seed,
         ),
         progress=say,
     )
     if say:
         say.done()
-    print(report_mod.text(result))
+    # A report of nothing examined is an error message, and errors go to stderr - so a
+    # script capturing stdout does not mistake one for findings.
+    print(report_mod.text(result), file=sys.stderr if result.problem else sys.stdout)
     if a.json:
         report_mod.write_json(result, a.json)
-        print(f"\nwrote {a.json}")
+        print(f"\nwrote {a.json}", file=sys.stderr if result.problem else sys.stdout)
 
+    if result.interrupted:
+        print("interrupted", file=sys.stderr)
+        return EXIT_INTERRUPTED
     if not result.ok:
+        if not result.problem:
+            print(
+                "error: not every arm could be examined (see INCOMPLETE above)",
+                file=sys.stderr,
+            )
         return EXIT_ERROR
     if a.fail_on_flake and result.flakes:
         return EXIT_FLAKY
