@@ -99,9 +99,15 @@ class Arm:
     under --continue-on-collection-errors, a run stopped early - and a test that did not
     run is not a pass. Rates are over the runs that observed the test, never over all runs.
 
-    Left empty (as hand-built arms in the unit tests do), every scored run is taken to
-    have observed every test.
+    Only consulted when `tracked` is set, as it is for every arm built from real runs.
+    Hand-built arms in the unit tests leave it unset, and every scored run is then taken
+    to have observed every test.
     """
+
+    tracked: bool = False
+    """`observed` holds real per-test observation counts. Kept separate from "is
+    `observed` empty", because an arm in which every test was skipped has an empty
+    `observed` too - and must report every test as unobserved, not as passing."""
 
     errors: dict[str, int] = field(default_factory=dict)
     """test id -> runs in which it errored in setup or teardown (included in `failures`)."""
@@ -115,7 +121,7 @@ class Arm:
 
     def seen(self, test_id: str) -> int:
         """Runs in which this test was observed to pass or fail."""
-        if not self.observed:
+        if not self.tracked:
             return self.runs
         return self.observed.get(test_id, 0)
 

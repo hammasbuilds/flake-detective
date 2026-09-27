@@ -452,6 +452,7 @@ def run_once(
 
 def _tally(arm: Arm, obs: Observed) -> None:
     arm.runs += 1
+    arm.tracked = True
     for t in obs.seen:
         arm.observed[t] = arm.observed.get(t, 0) + 1
     for t in obs.failed:
@@ -484,13 +485,22 @@ def execute(
         i, kw = unit
         return i, run_observed(**kw)
 
+    casualties: set[int] = set()
+    casualty_why: list[str] = []
+
     def record(i: int, res: tuple[Observed | None, str]) -> None:
         obs, why = res
         if stopping():
             return
-        results[i].append(obs)
-        if obs is None and why and not arm.error:
+        if obs is None and ("KeyboardInterrupt" in why or why == "interrupted"):
+            # On a console Ctrl-C reaches the child pytest too, and it can exit a moment
+            # before this process notices. That run is a casualty of the interrupt, not
+            # a run that could not be scored; it is dropped if the interrupt follows.
+            casualties.add(i)
+            casualty_why.append(why)
+        elif obs is None and why and not arm.error:
             arm.error = why
+        results[i].append(obs)
         if tick:
             tick()
 
@@ -518,6 +528,11 @@ def execute(
         arm.interrupted = True
 
     finished = [i for i in range(len(runs)) if len(results[i]) == len(runs[i])]
+    if arm.interrupted:
+        finished = [i for i in finished if i not in casualties]
+    elif casualty_why and not arm.error:
+        # Not ours: a test in the suite raised KeyboardInterrupt itself.
+        arm.error = casualty_why[0]
     arm.attempted += len(runs) if not arm.interrupted else len(finished)
     for i in finished:
         scored = [r for r in results[i] if r is not None]

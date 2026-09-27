@@ -128,17 +128,19 @@ def test_rates_count_only_the_runs_that_observed_the_test():
     """`addopts = -x` stopped runs before test_b; absence read as a pass and made an
     order-dependent test look nondeterministic (baseline 0.6). Five runs, observed in
     three, failed in all three: that is a stable failure, not a flip."""
-    baseline = Arm("baseline", "b", runs=5, failures={T: 3}, observed={T: 3, "t.py::x": 5})
+    baseline = Arm(
+        "baseline", "b", runs=5, failures={T: 3}, observed={T: 3, "t.py::x": 5}, tracked=True
+    )
     assert baseline.seen(T) == 3
     assert baseline.rate(T) == 1.0
     assert baseline.is_stable(T)
-    order = Arm("order", "o", runs=5, failures={T: 2}, observed={T: 5, "t.py::x": 5})
+    order = Arm("order", "o", runs=5, failures={T: 2}, observed={T: 5, "t.py::x": 5}, tracked=True)
     f = _one(baseline, order)
     assert f.cause is Cause.ORDER
 
 
 def test_a_test_no_run_observed_is_reported_as_unjudged_not_as_passing():
-    baseline = Arm("baseline", "b", runs=3, failures={}, observed={"t.py::x": 3})
+    baseline = Arm("baseline", "b", runs=3, failures={}, observed={"t.py::x": 3}, tracked=True)
     inv = classify([baseline], [T, "t.py::x"])
     assert inv.unobserved == [T]
     assert not inv.flakes
@@ -169,3 +171,12 @@ def test_an_arm_that_never_saw_a_test_prints_a_dash_not_a_zero():
     )
     row = next(line for line in text(inv).splitlines() if line.startswith(T))
     assert row.split()[-2:] == ["0.5", "-"]
+
+
+def test_a_suite_where_everything_was_skipped_is_unjudged_not_clean():
+    """An arm whose runs observed nothing has an empty `observed` - which once meant
+    "assume every run saw every test", and so read as seven clean passes each."""
+    baseline = Arm("baseline", "b", runs=3, tracked=True)
+    order = Arm("order", "o", runs=3, tracked=True)
+    inv = classify([baseline, order], [T])
+    assert inv.unobserved == [T]

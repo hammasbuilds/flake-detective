@@ -209,3 +209,17 @@ def test_xdist_in_addopts_does_not_distribute_the_baseline(tmp_path):
         },
     )
     assert run_mod.run_once(d) == set()
+
+
+def test_a_suite_where_every_test_skips_is_an_error_not_a_clean_bill(tmp_path, capsys):
+    from flake_detective.cli import main
+
+    _write(
+        tmp_path,
+        {"test_s.py": "import pytest\n\n@pytest.mark.skip\ndef test_a():\n    pass\n"},
+    )
+    code = main(["investigate", str(tmp_path), "--runs", "2", "--arms", "order", "--quiet"])
+    cap = capsys.readouterr()
+    assert code == 2
+    assert "skipped or never ran" in cap.err
+    assert "No flaky tests found" not in cap.out + cap.err

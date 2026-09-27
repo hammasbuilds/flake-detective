@@ -334,6 +334,13 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
             return inv
 
     inv = classify(built, tests)
+    if tests and len(inv.unobserved) == len(tests):
+        # Every test skipped, or none ever reached: "no flaky tests" would be true and
+        # worthless. Nothing was examined, and that is an error.
+        inv.problem = (
+            f"all {len(tests)} collected tests were skipped or never ran in every run, "
+            "so nothing was examined"
+        )
     state.inv = inv
 
     if opts.localise:

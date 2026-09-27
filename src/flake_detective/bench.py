@@ -56,6 +56,10 @@ def run(
             progress=say,
         )
 
+    if inv.interrupted:
+        # A partial benchmark has no score, and a sweep must not carry on to the next
+        # run count. The command line turns this into "interrupted" and exit 130.
+        raise KeyboardInterrupt
     if not inv.ok:
         # A benchmark that could not run has no score. Reporting 0 of 4 detected would
         # read as a classifier that failed, when nothing was classified at all.
