@@ -132,7 +132,8 @@ def pytest_problem(python: str = "", repo: Path | None = None) -> str:
         "  - point --python at that interpreter, e.g.\n"
         "      --python .venv/bin/python            (Linux, macOS)\n"
         "      --python .venv\\Scripts\\python.exe    (Windows)\n"
-        f"  - or install pytest into this one:  {shown} -m pip install pytest"
+        f"  - or install pytest into this one:  {shown} -m pip install pytest\n"
+        f"    (in a uv-made venv without pip:   uv pip install --python {shown} pytest)"
     )
 
 

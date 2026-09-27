@@ -129,7 +129,7 @@ other work at the time (so read these as upper bounds):
 
 | command | runs | wall time |
 |---|---:|---:|
-| `flake-detective bench` (default `--jobs 4`) | 28 | 67 s |
+| `flake-detective bench` (default `--jobs 4`) | 28 | 38 s and 67 s, in two runs |
 | `flake-detective bench --jobs 1` | 28 | 142 s |
 | `flake-detective investigate ./fx` (the same suite, `--jobs 1`) | 28 | 99 s |
 
