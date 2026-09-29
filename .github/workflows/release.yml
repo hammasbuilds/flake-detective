@@ -47,8 +47,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: pip install pytest ruff
-      - run: ruff check src tests demo.py
-      - run: ruff format --check src tests demo.py
+      - run: ruff check src tests scripts demo.py
+      - run: ruff format --check src tests scripts demo.py
       - run: pip install -e .
       - run: pytest -q
 
