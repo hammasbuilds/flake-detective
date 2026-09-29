@@ -288,26 +288,33 @@ pass reported the nondeterministic test as `clock` — confidently, and wrongly.
 
 ### On real suites, where every finding would be a false positive
 
-These two passes, and the planted-flake study below, were measured before outcomes were
-read from pytest's own reports (the audit fixes listed further down). The change can only
-add observations — errors, and ids the old parser dropped — so re-measuring could raise the
-false-positive count; it has not been re-run.
+The wide pass below was re-measured on **2026-09-29** against the current suites (several
+had grown substantially since the last pass, some by 2-10x — an active portfolio, not a
+fixed benchmark). The deep pass and the planted-flake study further down were both
+measured before outcomes were read from pytest's own reports (the audit fixes listed
+further down); that change can only add observations, never hide one, so re-measuring
+could only raise a false-positive count that has stayed at zero across two different
+outcome-reading implementations now — but the deep pass and the plant study themselves
+have not been re-run since, and are dated below.
 
 Two separate passes over real, deterministic suites, at different depths:
 
 | pass | suites | tests | runs per arm | flagged as flaky |
 |---|---:|---:|---:|---:|
-| deep | 5 | 166 | 5 (20 runs per suite) | **0** |
-| wide | 15 | 660 | 3 (12 runs per suite) | **0** |
+| deep (measured before the outcome-reading refactor, not re-run) | 5 | 166 | 5 (20 runs per suite) | **0** |
+| wide (re-measured 2026-09-29) | 14 scored + 1 environment crash | 1,752 | 3 (12 runs per suite) | **0** |
 
-The wide pass includes the five suites of the deep one; a few had gained tests in between
-(blast-radius 28 → 32, suite-auditor 24 → 32), which is why the counts differ. The
-fifteen: clcuv-surveillance (101 tests), primer-designer (64), urdu-nlp-toolkit (57),
-repo-surgeon (47), insurance-mlops (44), docstring-drift (42), perf-hunter (42),
-demand-forecast-platform (41), credit-risk-engine (40), pr-referee (37), blast-radius (32),
-model-serving-platform (32), suite-auditor (32), trace-to-patch (30), devign-leakage (19).
-All share an author, so a clean sweep across them is weaker evidence than unrelated
-projects would be.
+The fifteenth suite, devign-leakage, could not be scored this pass: pytest itself crashes
+on import inside that repo's own virtual environment (`pandas.errors` hits a native stack
+overflow, exit code 0xC0000FD unrelated to flake-detective) — reported honestly as "nothing
+was examined," not folded into the clean total.
+
+The fourteen scored, current counts: urdu-nlp-toolkit (576 tests), blast-radius (237),
+clcuv-surveillance (203), suite-auditor (108), credit-risk-engine (108), primer-designer
+(94), demand-forecast-platform (77), insurance-mlops (111), repo-surgeon (47),
+docstring-drift (42), perf-hunter (42), pr-referee (37), model-serving-platform (40),
+trace-to-patch (30). All share an author, so a clean sweep across them is weaker evidence
+than unrelated projects would be.
 
 A detector that cries wolf gets uninstalled in a week, so this is the number to check
 before the detection rate. On its own it only shows the tool is quiet on quiet code.
@@ -317,7 +324,10 @@ before the detection rate. On its own it only shows the tool is quiet on quiet c
 The fixture's author and the classifier's author are the same person, so the fixture
 cannot fairly measure detection. So a flake of known cause was planted into twelve real
 suites instead — among thirty to ninety real tests each, with their own fixtures and
-conftest — using [`scripts/inject_and_score.py`](https://github.com/hammasbuilds/flake-detective/blob/main/scripts/inject_and_score.py):
+conftest — using [`scripts/inject_and_score.py`](https://github.com/hammasbuilds/flake-detective/blob/main/scripts/inject_and_score.py). Measured before the outcome-reading
+refactor above; not re-run since (unlike the wide pass, replaying a plant against a
+suite that has since gained or lost tests is not a like-for-like re-check, so this one
+is left dated rather than re-run against drifted targets):
 
 | | |
 |---|---:|
