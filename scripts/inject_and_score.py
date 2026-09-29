@@ -133,9 +133,18 @@ def score_one(repo: Path, cause: Cause, body: str, runs: int, python: str) -> di
         # Copy rather than plant in place. Planting into the real repository and
         # deleting afterwards works right up to the run that crashes.
         shutil.copytree(
-            repo, copy, symlinks=True,
-            ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache",
-                                          "node_modules", ".mypy_cache", ".ruff_cache"),
+            repo,
+            copy,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(
+                ".git",
+                ".venv",
+                "__pycache__",
+                ".pytest_cache",
+                "node_modules",
+                ".mypy_cache",
+                ".ruff_cache",
+            ),
         )
         target = test_dir(copy)
         if target is None:
@@ -200,11 +209,14 @@ def main() -> int:
                 mark = "?"
             else:
                 mark = "MISS"
-            print(f"  {row['repo']:<28} {cause.value:<15} {mark:<5}"
-                  f" reported={row.get('reported_cause')}"
-                  f" tests={row.get('total_tests')}"
-                  f" collateral={len(row.get('collateral') or [])}"
-                  f"  {row.get('outcome')}", flush=True)
+            print(
+                f"  {row['repo']:<28} {cause.value:<15} {mark:<5}"
+                f" reported={row.get('reported_cause')}"
+                f" tests={row.get('total_tests')}"
+                f" collateral={len(row.get('collateral') or [])}"
+                f"  {row.get('outcome')}",
+                flush=True,
+            )
 
     scored = [r for r in rows if r.get("outcome") == "ok"]
     found = [r for r in scored if r["found"]]
@@ -213,8 +225,12 @@ def main() -> int:
     print()
     print(f"{len(scored)} scoreable plants across {len({r['repo'] for r in scored})} repositories")
     if scored:
-        print(f"  detected              : {len(found)}/{len(scored)} = {len(found)/len(scored):.0%}")
-        print(f"  cause named correctly : {len(right)}/{len(scored)} = {len(right)/len(scored):.0%}")
+        print(
+            f"  detected              : {len(found)}/{len(scored)} = {len(found) / len(scored):.0%}"
+        )
+        print(
+            f"  cause named correctly : {len(right)}/{len(scored)} = {len(right) / len(scored):.0%}"
+        )
     print(f"  findings that were NOT the planted test: {collateral}")
     print("  (those are either real flakes in the target suite or false positives;")
     print("   this harness cannot tell which, and does not claim to)")
