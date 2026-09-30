@@ -286,7 +286,7 @@ The zero attribution at one run is deliberate. One run per arm finds instability
 that cannot flip cannot rule out nondeterminism. Before that refusal existed, the one-run
 pass reported the nondeterministic test as `clock` — confidently, and wrongly.
 
-### On real suites, where every finding would be a false positive
+### On real suites
 
 The wide pass below was re-measured on **2026-09-29** against the current suites (several
 had grown substantially since the last pass, some by 2-10x — an active portfolio, not a
@@ -343,7 +343,7 @@ That run used 5 runs per arm, before the default changed.
 
 Full details: [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/blob/main/docs/RESULTS.md).
 
-## What this does NOT do
+## Scope
 
 - **It does not prove a suite is clean.** "No flaky tests found" means nothing was seen
   in this many runs, and the report prints what that many runs can miss. A test failing
@@ -371,49 +371,6 @@ Full details: [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/
   test asserting an operation took measurable wall-clock time will be flagged as
   clock-dependent — correctly.
 - **Only pytest.** unittest suites work as far as pytest can collect them.
-
-## Problems hit while building this
-
-Every one of these produced a **confident, wrong answer**, and the benchmark is what
-caught them.
-
-- **The control could not control the thing it was controlling for.** The clock arm first
-  waited 1.1 seconds between runs, but the baseline takes time too, so a test asserting
-  `int(time.time()) % 2 == 0` flipped in the *baseline* and was filed as nondeterminism.
-  The fix: freeze the clock in every arm and move the frozen instant only in the clock arm.
-- **The cleanest evidence there is was invisible.** The hash-dependent test passed 7/7
-  under seed 0 and failed 7/7 under seeds 1–7. It never flipped *within* an arm, and the
-  classifier only looked for flips, so it reported nothing.
-- **One run per arm produced a confident cause** (see above).
-- **The date boundaries were not on any boundary.** Instants pinned in UTC landed, on a
-  UTC+5 machine, on the local afternoon of ordinary days. They are now placed in local
-  time, where the suite under test reads them.
-- **The tool reported success when it had examined nothing.** An empty directory, a
-  missing pytest and a collection error all printed "No flaky tests found" and exited 0;
-  with pytest missing, `bench` reported "detection 0/4" as though the classifier had
-  failed. Each is now exit status 2 with the reason.
-
-An independent audit of the first release candidate found more, all of the same kind:
-
-- **Fixture errors were invisible.** Outcomes were scraped from pytest's `-rf` summary,
-  which prints `FAILED` lines only. A test whose fixture raised in every baseline run
-  appeared nowhere — not as flaky, not even as broken.
-- **A test that never ran counted as a pass.** With `addopts = -x`, an order-dependent test
-  sitting after a random failure came back as *nondeterminism* (baseline 0.6), because in
-  the runs where the earlier test failed it never ran at all.
-- **A test id containing `" - "` vanished**: the summary line uses that to separate the id
-  from the message.
-- **A REPO below the rootdir wasted every order run.** With `mono/pytest.ini` and
-  `investigate mono/pkg`, node ids came back relative to `mono` and were passed back from
-  `mono/pkg`: "file or directory not found". They are now made absolute.
-- **More arms gave a weaker answer.** Under `--arms all` a plain polluter/victim pair was
-  `UNKNOWN (order, parallel, isolation)`, and the headline said "9 flaky tests" but listed
-  four, because its list of causes predated four of the arms.
-- **A test that needs another was told the other test was polluting it**, and `--localise`
-  then called it "broken, not order-dependent" because it fails alone.
-- **Ctrl-C printed a twenty-line traceback and threw away every finished run.**
-
-All of these now have regression tests.
 
 ## Layout
 
