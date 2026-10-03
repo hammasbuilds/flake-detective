@@ -154,6 +154,28 @@ per arm" rather than "no flaky tests", because those are different claims.
 
 ---
 
+## 3b. Two third-party suites, re-runnable
+
+`sh scripts/reproduce_third_party.sh` - toolz `451af60`, sqlparse `60cdc64`, one plant per
+cause, 7 runs per arm, 4 jobs, `--seed 0`. Run 2026-10-03, 40 minutes in total on a
+shared 16-core Windows machine.
+
+| suite | plant | reported | other tests flagged | seconds |
+|---|---|---|---|---:|
+| toolz | order | order | - | 308 |
+| toolz | hash-seed | hash-seed | - | 205 |
+| toolz | clock | clock | - | 185 |
+| toolz | nondeterminism | nondeterminism | - | 299 |
+| sqlparse | order | order | `..._case_within_cap_under_1s` | 431 |
+| sqlparse | hash-seed | hash-seed | `..._paren_within_cap_under_1s`, `..._case_within_cap_under_1s` | 416 |
+| sqlparse | clock | clock | `..._case_within_cap_under_1s` | 264 |
+| sqlparse | nondeterminism | unknown | `..._case_within_cap_under_1s` | 290 |
+
+The sqlparse tests flagged alongside the plants are in `tests/test_dos_prevention.py` and
+assert that a pathological parse finishes in under one second of wall time - genuinely
+load-dependent. The nondeterminism plant fails half its runs; when all seven baseline
+runs happen to agree (1.6%) the other arms disagree and the verdict is `UNKNOWN`.
+
 ## 4. What the numbers do not say
 
 - **100% on a ten-test fixture is a small claim.** It is one test per cause. What makes it

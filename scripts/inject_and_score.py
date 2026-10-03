@@ -122,10 +122,16 @@ def test_dir(repo: Path) -> Path | None:
             return path
     if list(repo.glob("test_*.py")):
         return repo
+    # A package that keeps its tests inside itself, as toolz does (toolz/tests).
+    for candidate in sorted(repo.glob("*/tests")) + sorted(repo.glob("*/test")):
+        if candidate.is_dir() and list(candidate.glob("test_*.py")):
+            return candidate
     return None
 
 
-def score_one(repo: Path, cause: Cause, body: str, runs: int, python: str) -> dict:
+def score_one(
+    repo: Path, cause: Cause, body: str, runs: int, python: str, jobs: int = 1, seed: int = 0
+) -> dict:
     """Plant one flake in a copy of the repo and report what came back."""
     work = Path(tempfile.mkdtemp(prefix="inject_"))
     try:
@@ -152,7 +158,7 @@ def score_one(repo: Path, cause: Cause, body: str, runs: int, python: str) -> di
         (target / "test_planted_flake.py").write_text(body, encoding="utf-8")
 
         started = time.time()
-        inv = investigate(copy, None, Options(runs=runs, python=python))
+        inv = investigate(copy, None, Options(runs=runs, python=python, jobs=jobs, order_seed=seed))
         planted = [f for f in inv.flakes if "planted" in f.test_id]
         other = [f for f in inv.flakes if "planted" not in f.test_id]
 
@@ -188,7 +194,10 @@ def score_one(repo: Path, cause: Cause, body: str, runs: int, python: str) -> di
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("repos", nargs="+", type=Path)
-    ap.add_argument("--runs", type=int, default=5)
+    # 7 is the tool's own default; the dated 48-plant study predates it and used 5.
+    ap.add_argument("--runs", type=int, default=7)
+    ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--seed", type=int, default=0, help="order-arm shuffle seed")
     ap.add_argument("--python", default="")
     ap.add_argument("--json", type=Path)
     args = ap.parse_args()
@@ -199,7 +208,7 @@ def main() -> int:
             print(f"  {repo}: not a directory")
             continue
         for cause, body in PLANTS.items():
-            row = score_one(repo, cause, body, args.runs, args.python)
+            row = score_one(repo, cause, body, args.runs, args.python, args.jobs, args.seed)
             rows.append(row)
             if row.get("outcome") != "ok":
                 mark = "skip"

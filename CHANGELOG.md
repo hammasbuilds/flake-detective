@@ -11,6 +11,10 @@ First release.
 
 ### Added
 
+- `scripts/reproduce_third_party.sh`: plants one flake per cause into toolz and sqlparse
+  at pinned commits and scores the result, so the detection claim no longer rests only on
+  the author's own repositories. `inject_and_score.py` gained `--jobs`/`--seed`, defaults
+  to 7 runs per arm, and finds tests kept inside the package (`toolz/tests`).
 - `flake-detective investigate REPO [TARGET]` - runs a pytest suite repeatedly, changing
   one thing per arm, and reports **which cause** makes each flaky test flip: test order,
   hash seed, the wall clock, or nothing at all (nondeterminism). Every arm's failure rate

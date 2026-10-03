@@ -59,7 +59,7 @@ flake-detective investigate . tests --localise
 # Repeat an earlier investigation's shuffles exactly (the report prints the seed)
 flake-detective investigate . tests --seed 1234
 
-# Check the tool against a suite whose answers are known (about a minute)
+# Check the tool against a suite whose answers are known (1-4 minutes, see What it costs)
 flake-detective bench
 
 # Write that suite out to read it
@@ -110,6 +110,11 @@ test_nondeterministic.py::test_unseeded_random              0.4      0.4      0.
     fix: it flips with nothing changed - unseeded randomness, or a race
 ```
 
+`--seed 0` repeats the shuffles, so the order, hash-seed and clock rows come out the same
+every time. The nondeterministic row does not (that test is unseeded on purpose), and
+the wall time in the first line depends on the machine - 37 s here, up to a few minutes
+on a loaded one.
+
 **The evidence is the shape of the row, not the label.** Three rows are zero everywhere
 but one column — that is what an attribution looks like. The order row says *direction
 undetermined* because only the order arm measured it; `--localise` would add "passes on
@@ -134,12 +139,12 @@ Progress is printed per run, with an estimate of what is left:
   .. hashseed 3/7   (run 17 of 28, 32s so far, about 21s left)
 ```
 
-Measured on the built-in 10-test suite, on a 16-core Windows machine that was busy with
-other work at the time (so read these as upper bounds):
+Measured on the built-in 10-test suite, on a 16-core Windows machine shared with other
+jobs. Load dominates: the same command ranged over 4x on one day.
 
 | command | runs | wall time |
 |---|---:|---:|
-| `flake-detective bench` (default `--jobs 4`) | 28 | 38 s and 67 s, in two runs |
+| `flake-detective bench` (default `--jobs 4`) | 28 | 38 s and 67 s in two earlier runs; 48, 49, 156, 179 and 214 s in five runs on 2026-10-03 |
 | `flake-detective bench --jobs 1` | 28 | 142 s |
 | `flake-detective investigate ./fx` (the same suite, `--jobs 1`) | 28 | 99 s; 37 s on a later, quieter run |
 
@@ -261,7 +266,10 @@ your `addopts` is kept. A pytest-rerunfailures retry counts as the failure it wa
 ### On a suite with known answers
 
 `flake-detective bench` at 7 runs per arm: **4/4 flaky tests detected, 4/4 with the right
-cause, 0 of 6 stable tests flagged.** The stable tests are what make that mean anything:
+cause, 0 of 6 stable tests flagged.** Not every time: the nondeterministic test fails
+half its runs, so with probability 2/2^7 = 1.6% all seven baseline runs agree, the
+other arms then disagree with each other, and it comes back `UNKNOWN` - attribution
+3/4, never a wrong cause. One of six `bench` runs on 2026-10-03 did exactly that. The stable tests are what make that mean anything:
 three are written to look flaky (one iterates a set, one mutates module state, one reads
 the clock), and one is the other half of the order-dependent pair.
 
@@ -297,7 +305,9 @@ could only raise a false-positive count that has stayed at zero across two diffe
 outcome-reading implementations now — but the deep pass and the plant study themselves
 have not been re-run since, and are dated below.
 
-Two separate passes over real, deterministic suites, at different depths:
+Two separate passes over real, deterministic suites, at different depths. Both are
+author-run: the suites are the author's own repositories, so these rows cannot be
+re-run from this repository alone (the third-party study below can):
 
 | pass | suites | tests | runs per arm | flagged as flaky |
 |---|---:|---:|---:|---:|
@@ -319,7 +329,31 @@ than unrelated projects would be.
 A detector that cries wolf gets uninstalled in a week, so this is the number to check
 before the detection rate. On its own it only shows the tool is quiet on quiet code.
 
-### Planted in other people's suites
+### Planted in third-party suites (re-runnable)
+
+The two studies below ran against the author's own repositories, so nobody else can
+re-run them. This one can: `sh scripts/reproduce_third_party.sh` clones
+[toolz](https://github.com/pytoolz/toolz) at `451af60` and
+[sqlparse](https://github.com/andialbrecht/sqlparse) at `60cdc64`, plants one flake of
+each cause into each, and investigates at the defaults (7 runs per arm, `--seed 0`).
+Measured 2026-10-03 on a 16-core Windows machine shared with other jobs:
+
+| suite | tests | order | hash-seed | clock | nondeterminism | other tests flagged |
+|---|---:|:---:|:---:|:---:|:---:|---|
+| toolz | 194 | right | right | right | right | none |
+| sqlparse | 510 | right | right | right | `UNKNOWN` | 2 distinct, in 4 of 4 runs |
+
+8 of 8 plants detected, 7 of 8 with the right cause. The miss is the same one the
+benchmark can show (below): a test that fails half the time also passes all 7 baseline
+runs, or fails all 7, with probability 2/2^7 = 1.6%, and then the other arms disagree
+and the answer is `UNKNOWN` rather than a guess.
+
+The two sqlparse tests flagged besides the plants are real wall-clock flakes, not false
+positives: `test_dos_prevention.py::test_nested_paren_within_cap_under_1s` and
+`..._case_within_cap_under_1s` assert that a parse finishes in under one second, which
+a loaded machine does not always manage.
+
+### Planted in the author's other suites (author-run, dated)
 
 The fixture's author and the classifier's author are the same person, so the fixture
 cannot fairly measure detection. So a flake of known cause was planted into twelve real
@@ -389,7 +423,7 @@ src/flake_detective/
   types.py       the causes, and what distinguishes them
 ```
 
-From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`.
+From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`. That runs the 129 fast tests (plus 2 that skip on Windows; about 3 minutes); `pytest -m slow` runs the 9 end-to-end ones that put real suites through every arm (about 4 more), and `pytest -m "slow or not slow"` runs all 138, as CI does.
 
 ## License
 
