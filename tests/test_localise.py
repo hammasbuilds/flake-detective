@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def _suite(root: Path, extra: str = "") -> Path:
     """A real little suite: one culprit, one victim, and several innocents."""
@@ -37,6 +39,7 @@ def _suite(root: Path, extra: str = "") -> Path:
     return root
 
 
+@pytest.mark.slow
 def test_the_culprit_behind_an_order_dependence_is_named(tmp_path):
     """The stated limitation: "Order dependence is found, not localised."
 
@@ -101,6 +104,7 @@ def test_a_victim_nothing_reproduces_is_reported_as_such(tmp_path):
     assert result.culprits == []
 
 
+@pytest.mark.slow
 def test_a_test_that_needs_another_is_localised_to_the_one_it_needs(tmp_path):
     """The audit case: test_f needs the environment test_e sets. It fails alone, and
     the old localiser stopped there and called it "broken, not order-dependent" -

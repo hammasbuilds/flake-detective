@@ -50,7 +50,7 @@ jobs:
       - run: ruff check src tests scripts demo.py
       - run: ruff format --check src tests scripts demo.py
       - run: pip install -e .
-      - run: pytest -q
+      - run: pytest -q -m "slow or not slow"
 
   build:
     needs: test

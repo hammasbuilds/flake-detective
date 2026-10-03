@@ -217,6 +217,7 @@ def test_missing_pytest_fails_loudly_in_bench(capsys, python_without_pytest):
     assert "detection" not in out
 
 
+@pytest.mark.slow
 def test_fail_on_flake_exits_one_and_a_clean_run_exits_zero(tmp_path, capsys):
     (tmp_path / "test_seed.py").write_text(
         "import os\n\ndef test_seed():\n    assert os.environ['PYTHONHASHSEED'] == '0'\n",
@@ -263,6 +264,7 @@ def test_a_file_as_repo_suggests_the_project_not_the_files_own_folder(
     assert "investigate stable tests/unit/test_u.py" in err, err
 
 
+@pytest.mark.slow
 def test_the_seed_is_printed_and_can_be_given(tmp_path, capsys):
     (tmp_path / "test_o.py").write_text("def test_a():\n    pass\n", "utf-8")
     args = ["investigate", str(tmp_path), "--quiet", "--runs", "2", "--arms", "order"]

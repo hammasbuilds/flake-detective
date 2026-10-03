@@ -52,6 +52,7 @@ def test_the_order_file_runs_only_the_listed_tests(pair, monkeypatch):
     assert failed == set(), why
 
 
+@pytest.mark.slow
 def test_concurrent_runs_score_the_same_as_serial_ones(pair):
     tests = run_mod.collect(pair)
     serial = run_mod.order_arm(pair, "", tests, 6, 120, None, seed=3)
@@ -78,6 +79,7 @@ def test_a_non_ascii_test_id_survives_the_round_trip(tmp_path: Path):
     assert run_mod.run_once(d, order=list(reversed(ids))) == {"test_u.py::test_λ"}
 
 
+@pytest.mark.slow
 def test_progress_ticks_once_per_run_and_counts_down(pair):
     seen: list[tuple[str, bool]] = []
     inv = investigate(

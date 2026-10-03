@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Find flaky tests and say what they depend on - order, hash seed, clock, or nothing at all"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "hammasbuilds" }]
 keywords = ["flaky tests", "pytest", "test isolation", "determinism", "ci", "test ordering"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -56,3 +56,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The nine end-to-end tests that each run a real suite dozens of times (~4 of the 7
+# minutes) are opt-in: `pytest -m slow`, or `pytest -m "slow or not slow"` for all.
+addopts = "-m 'not slow'"
+markers = ["slow: runs a real pytest suite many times end to end"]

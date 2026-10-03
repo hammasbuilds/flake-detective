@@ -54,6 +54,7 @@ def test_a_teardown_error_is_a_failure(tmp_path):
     assert run_mod.run_once(d) == {"test_t.py::test_passes_then_errors"}
 
 
+@pytest.mark.slow
 def test_a_fixture_level_order_dependence_is_found(tmp_path):
     """The audit's case: the victim errors in setup in every baseline run. It appeared
     nowhere - not as flaky, not even as broken."""
@@ -156,6 +157,7 @@ def test_collection_does_not_depend_on_the_projects_verbosity(tmp_path):
     assert run_mod.collect(d) == ["test_q.py::test_a", "test_q.py::test_b"]
 
 
+@pytest.mark.slow
 def test_a_repo_below_the_rootdir_runs_its_order_arm(tmp_path):
     """mono/pytest.ini with `investigate mono/pkg`: ids come back relative to mono, runs
     start in mono/pkg, and every order run failed with "file or directory not found"."""
@@ -180,6 +182,7 @@ def test_a_repo_below_the_rootdir_runs_its_order_arm(tmp_path):
     assert order.runs == order.attempted == 4
 
 
+@pytest.mark.slow
 def test_needs_another_test_end_to_end_with_localise_in_report_and_json(tmp_path):
     d = _write(
         tmp_path,

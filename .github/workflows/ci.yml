@@ -30,7 +30,7 @@ jobs:
       # deliberately contains clock- and hash-dependent tests, so it is run by hand and
       # its numbers recorded in docs/RESULTS.md rather than gated on here.
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q -m "slow or not slow"
 
       - name: Every subcommand's --help, through the installed entry point
         run: |
