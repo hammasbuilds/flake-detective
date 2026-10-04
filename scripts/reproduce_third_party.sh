@@ -3,7 +3,8 @@
 # known cause into toolz and sqlparse at pinned commits, and report what came back.
 # Neither project shares an author with this tool. Needs git, network for the clones,
 # and an interpreter with pytest (the one flake-detective is installed in is fine).
-# About 30-40 minutes on a laptop at the defaults (7 runs per arm, 4 jobs).
+# About 5 minutes on a quiet 16-core machine at the defaults (7 runs per arm, 4 jobs);
+# 30-40 minutes on a busy one.
 #
 # Usage: sh scripts/reproduce_third_party.sh [python-with-pytest] [workdir]
 set -eu

@@ -11,6 +11,7 @@ First release.
 
 ### Added
 
+- `python -m flake_detective`, the same as the `flake-detective` command.
 - `scripts/reproduce_third_party.sh`: plants one flake per cause into toolz and sqlparse
   at pinned commits and scores the result, so the detection claim no longer rests only on
   the author's own repositories. `inject_and_score.py` gained `--jobs`/`--seed`, defaults
@@ -50,6 +51,9 @@ First release.
 
 ### Fixed (found before release)
 
+- Verdicts read "failed 3 of 7 runs when the wall clock frozen at a different date"
+  (and the same for the parallel and isolation arms); the arm descriptions are now
+  clauses that read correctly in both the header and the verdict.
 - Outcomes were scraped from pytest's `-rf` summary. Now a plugin records pytest's own
   reports, which fixes: setup/teardown errors being invisible (a fixture-level order
   dependence appeared nowhere); a test that did not run (`-x`, `--maxfail`, `--sw` in

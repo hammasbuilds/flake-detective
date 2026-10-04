@@ -59,7 +59,7 @@ flake-detective investigate . tests --localise
 # Repeat an earlier investigation's shuffles exactly (the report prints the seed)
 flake-detective investigate . tests --seed 1234
 
-# Check the tool against a suite whose answers are known (1-4 minutes, see What it costs)
+# Check the tool against a suite whose answers are known (seconds to minutes, see What it costs)
 flake-detective bench
 
 # Write that suite out to read it
@@ -73,13 +73,16 @@ default 7 runs per arm, from `flake-detective fixture ./fx` then
 `flake-detective investigate ./fx --seed 0`:
 
 ```
-10 tests, 4 arms, 37s
+==========================================================================
+FLAKE DETECTIVE
+==========================================================================
+10 tests, 4 arms, 24s
 order seed 0 (--seed 0 repeats these shuffles)
 
   baseline   7 runs         identical conditions, repeated
   order      7 runs         the same tests, shuffled
   hashseed   7 runs         PYTHONHASHSEED varied
-  clock      7 runs         the wall clock frozen at a different date each run
+  clock      7 runs         the wall clock was frozen at a different date each run
 
 4 flaky tests:
     1  order
@@ -102,18 +105,18 @@ test_order_dependent.py::test_aaa_first_one_wins            0.0      0.4      0.
     fix: something iterates a dict or set and depends on the order; sort it
 
 test_clock_dependent.py::test_second_is_even                0.0      0.0      0.0      0.4
-    CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock frozen at a different date each run
+    CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock was frozen at a different date each run
     fix: it reads the wall clock; freeze or inject the time
 
-test_nondeterministic.py::test_unseeded_random              0.4      0.4      0.6      0.9
-    NONDETERMINISM: flipped with nothing changed: failed 3 of 7 identical runs
+test_nondeterministic.py::test_unseeded_random              0.7      1.0      0.6      0.7
+    NONDETERMINISM: flipped with nothing changed: failed 5 of 7 identical runs
     fix: it flips with nothing changed - unseeded randomness, or a race
 ```
 
 `--seed 0` repeats the shuffles, so the order, hash-seed and clock rows come out the same
 every time. The nondeterministic row does not (that test is unseeded on purpose), and
-the wall time in the first line depends on the machine - 37 s here, up to a few minutes
-on a loaded one.
+the wall time in the first line depends on the machine - 15 to 24 s on a 16-core Windows
+machine, up to a few minutes on a heavily loaded one.
 
 **The evidence is the shape of the row, not the label.** Three rows are zero everywhere
 but one column — that is what an attribution looks like. The order row says *direction
@@ -139,18 +142,17 @@ Progress is printed per run, with an estimate of what is left:
   .. hashseed 3/7   (run 17 of 28, 32s so far, about 21s left)
 ```
 
-Measured on the built-in 10-test suite, on a 16-core Windows machine shared with other
-jobs. Load dominates: the same command ranged over 4x on one day.
+Measured on the built-in 10-test suite, 2026-10-04, on a 16-core Windows machine:
 
 | command | runs | wall time |
 |---|---:|---:|
-| `flake-detective bench` (default `--jobs 4`) | 28 | 38 s and 67 s in two earlier runs; 48, 49, 156, 179 and 214 s in five runs on 2026-10-03 |
-| `flake-detective bench --jobs 1` | 28 | 142 s |
-| `flake-detective investigate ./fx` (the same suite, `--jobs 1`) | 28 | 99 s; 37 s on a later, quieter run |
+| `flake-detective bench` (default `--jobs 4`) | 28 | 5 s |
+| `flake-detective bench --sweep` | 6 run counts | 26 s |
+| `flake-detective investigate ./fx --seed 0` (`--jobs 1`) | 28 | 15 s; 24 s with another job running |
 
-The two `--jobs 1` rows do the same work; the 40-second gap between them is the machine's
-load, not the tool. Most of each run is pytest starting up, so on your suite expect
-roughly your normal `pytest` time, 28 times over.
+Load dominates: the same `bench` took 38 to 214 s on 2026-10-03 while the machine ran
+other jobs. Most of each run is pytest starting up, so on your suite expect roughly your
+normal `pytest` time, 28 times over.
 
 `--jobs N` runs N pytest processes at once. It is on by default for `bench`, whose suite
 shares nothing between processes, and **off by default for `investigate`**: two copies of
@@ -273,21 +275,26 @@ other arms then disagree with each other, and it comes back `UNKNOWN` - attribut
 three are written to look flaky (one iterates a set, one mutates module state, one reads
 the clock), and one is the other half of the order-dependent pair.
 
-What a run count buys, from `flake-detective bench --sweep`:
+What a run count buys. `flake-detective bench --sweep` scores one sweep; the
+nondeterministic test is unseeded on purpose, so a single sweep is a draw, not the rate.
+Eight sweeps on 2026-10-04 (`--sweep --json`), counting how many found all four flaky
+tests and how many also named all four causes right:
 
-| runs/arm | detection | attribution | false pos | secs |
+| runs/arm | all 4 detected | and all 4 causes right | stable tests flagged | secs per point |
 |---:|---:|---:|---:|---:|
-| 1 | 75% | **0%** | 0% | 18 |
-| 2 | 100% | 100% | 0% | 26 |
-| 3 | 100% | 100% | 0% | 19 |
-| 5 | 100% | 100% | 0% | 22 |
-| 7 | 100% | 100% | 0% | 24 |
-| 11 | 100% | 100% | 0% | 30 |
+| 1 | 0 of 8 (2-3 of 4 found) | 0 of 8 | 0 | 2-3 |
+| 2 | 7 of 8 | 7 of 8 | 0 | 2-3 |
+| 3 | 8 of 8 | 6 of 8 | 0 | 3-4 |
+| 5 | 8 of 8 | 8 of 8 | 0 | 4-6 |
+| 7 | 8 of 8 | 7 of 8 | 0 | 5-7 |
+| 11 | 8 of 8 | 8 of 8 | 0 | 7-9 |
 
-Seconds are with the default `--jobs 4` on the same busy machine, and noisy: the two-run
-row took longer than the three-run row. Detection at one run varies between sweeps
-(earlier ones found 3 of 4 and 2 of 4, this one 3 of 4) because a single shuffle may or may not put
-the order-dependent pair the wrong way round.
+The one miss at 2 runs is detection: the nondeterministic test gave the same result in
+every run of every arm, so nothing flagged it. Every other miss is that test coming back
+`UNKNOWN`: it fails
+about half its runs, so sometimes every baseline run agrees, the control shows no flip, and
+the other arms then disagree with each other. Nothing in those sweeps was given a wrong
+cause, and no stable test was ever flagged.
 
 The zero attribution at one run is deliberate. One run per arm finds instability and
 **refuses to name a cause**, because a baseline that runs once cannot flip, and a control
@@ -336,22 +343,26 @@ re-run them. This one can: `sh scripts/reproduce_third_party.sh` clones
 [toolz](https://github.com/pytoolz/toolz) at `451af60` and
 [sqlparse](https://github.com/andialbrecht/sqlparse) at `60cdc64`, plants one flake of
 each cause into each, and investigates at the defaults (7 runs per arm, `--seed 0`).
-Measured 2026-10-03 on a 16-core Windows machine shared with other jobs:
+Two runs on a 16-core Windows machine, one while it was busy with other jobs and one
+while it was quiet:
 
 | suite | tests | order | hash-seed | clock | nondeterminism | other tests flagged |
 |---|---:|:---:|:---:|:---:|:---:|---|
-| toolz | 194 | right | right | right | right | none |
-| sqlparse | 510 | right | right | right | `UNKNOWN` | 2 distinct, in 4 of 4 runs |
+| toolz, 2026-10-03 (busy) | 194 | right | right | right | right | none |
+| sqlparse, 2026-10-03 (busy) | 510 | right | right | right | `UNKNOWN` | 2 distinct, in 4 of 4 runs |
+| toolz, 2026-10-04 (quiet, 5 min in all) | 194 | right | right | right | right | none |
+| sqlparse, 2026-10-04 | 510 | right | right | right | right | none |
 
-8 of 8 plants detected, 7 of 8 with the right cause. The miss is the same one the
+16 of 16 plants detected, 15 of 16 with the right cause. The miss is the same one the
 benchmark can show (below): a test that fails half the time also passes all 7 baseline
 runs, or fails all 7, with probability 2/2^7 = 1.6%, and then the other arms disagree
 and the answer is `UNKNOWN` rather than a guess.
 
-The two sqlparse tests flagged besides the plants are real wall-clock flakes, not false
+The two sqlparse tests flagged on the busy day are real wall-clock flakes, not false
 positives: `test_dos_prevention.py::test_nested_paren_within_cap_under_1s` and
-`..._case_within_cap_under_1s` assert that a parse finishes in under one second, which
-a loaded machine does not always manage.
+`..._case_within_cap_under_1s` assert that a parse finishes in under one second, which a
+loaded machine does not always manage - and on the quiet day it did, so they were not
+flagged.
 
 ### Planted in the author's other suites (author-run, dated)
 
@@ -423,7 +434,7 @@ src/flake_detective/
   types.py       the causes, and what distinguishes them
 ```
 
-From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`. That runs the 129 fast tests (plus 2 that skip on Windows; about 3 minutes); `pytest -m slow` runs the 9 end-to-end ones that put real suites through every arm (about 4 more), and `pytest -m "slow or not slow"` runs all 138, as CI does.
+From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`. That runs the 129 fast tests (plus 2 that skip on Windows; about 30 seconds); `pytest -m slow` runs the 10 end-to-end ones that put real suites through every arm (about a minute), and `pytest -m "slow or not slow"` runs all 141, as CI does.
 
 ## License
 

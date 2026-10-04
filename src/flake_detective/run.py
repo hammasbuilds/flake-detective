@@ -634,7 +634,7 @@ def clock_arm(
     distinguish a clock-dependent test from a nondeterministic one, because the baseline
     also takes time to run. Freezing makes the date a controlled variable like any other.
     """
-    arm = Arm("clock", "the wall clock frozen at a different date each run")
+    arm = Arm("clock", "the wall clock was frozen at a different date each run")
     plan = [
         _call(
             repo,
@@ -826,7 +826,7 @@ def parallel_arm(
     implicates is reported as an order dependence, with this arm as corroboration, and
     only a flip seen here alone is credited to parallelism.
     """
-    arm = Arm("parallel", f"the suite spread across {workers} worker processes")
+    arm = Arm("parallel", f"the suite was spread across {workers} worker processes")
     plan = [
         _call(
             repo,
@@ -874,7 +874,7 @@ def isolation_arm(
         fails in the suite, passes alone   another test is leaking state into it
                                            (the order arm sees this one too)
     """
-    arm = Arm("isolation", "each test run alone in its own process")
+    arm = Arm("isolation", "each test was run alone in its own process")
     if not tests:
         return arm
     plan = [

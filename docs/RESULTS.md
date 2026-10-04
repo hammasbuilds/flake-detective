@@ -11,8 +11,9 @@ against five real repositories, where every finding would be a false positive.
 
 Reproduce with `flake-detective bench --sweep` and `flake-detective investigate REPO [TARGET]`.
 
-The fixture numbers below were re-measured on 2026-09-27 on a busy 16-core Windows machine
-(`bench --sweep` with the default `--jobs 4`), so the seconds are noisy upper bounds.
+The fixture numbers below were re-measured on 2026-10-04 on a 16-core Windows machine
+(`bench --sweep` with the default `--jobs 4`). Seconds depend heavily on what else the
+machine is doing.
 
 ---
 
@@ -41,19 +42,19 @@ under "failed in every run" instead. A real hash-order flake usually passes.
 
 ### Full report, 7 runs per arm
 
-Re-run on 2026-09-27 after outcomes moved to pytest's own reports, from a wheel installed
-into a fresh venv (`flake-detective investigate ./fx --seed 0`). The order row now says its
+Re-run on 2026-10-04 (`flake-detective fixture ./fx`, then
+`flake-detective investigate ./fx --seed 0`). The order row now says its
 direction is undetermined: only the order arm measured it. `--localise` adds "passes on its
 own and fails after `test_bbb_also_appends`".
 
 ```
-10 tests, 4 arms, 37s
+10 tests, 4 arms, 24s
 order seed 0 (--seed 0 repeats these shuffles)
 
   baseline   7 runs         identical conditions, repeated
   order      7 runs         the same tests, shuffled
   hashseed   7 runs         PYTHONHASHSEED varied
-  clock      7 runs         the wall clock frozen at a different date each run
+  clock      7 runs         the wall clock was frozen at a different date each run
 
 4 flaky tests:
     1  order
@@ -76,11 +77,11 @@ test_order_dependent.py::test_aaa_first_one_wins            0.0      0.4      0.
     fix: something iterates a dict or set and depends on the order; sort it
 
 test_clock_dependent.py::test_second_is_even                0.0      0.0      0.0      0.4
-    CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock frozen at a different date each run
+    CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock was frozen at a different date each run
     fix: it reads the wall clock; freeze or inject the time
 
-test_nondeterministic.py::test_unseeded_random              0.4      0.4      0.6      0.9
-    NONDETERMINISM: flipped with nothing changed: failed 3 of 7 identical runs
+test_nondeterministic.py::test_unseeded_random              0.7      1.0      0.6      0.7
+    NONDETERMINISM: flipped with nothing changed: failed 5 of 7 identical runs
     fix: it flips with nothing changed - unseeded randomness, or a race
 ```
 
@@ -92,15 +93,21 @@ regardless of the label printed beside it.
 
 ## 2. Accuracy against run count
 
-```
- runs   detection   attribution   false pos    secs
-    1        75%            0%          0%      18
-    2       100%          100%          0%      26
-    3       100%          100%          0%      19
-    5       100%          100%          0%      22
-    7       100%          100%          0%      24
-   11       100%          100%          0%      30
-```
+The nondeterministic test is unseeded on purpose, so one `bench --sweep` is one draw. Eight
+sweeps on 2026-10-04 (`flake-detective bench --sweep --json FILE`, eight times):
+
+| runs/arm | all 4 detected | and all 4 causes right | stable tests flagged | secs per point |
+|---:|---:|---:|---:|---:|
+| 1 | 0 of 8 (2-3 of 4 found) | 0 of 8 | 0 | 2-3 |
+| 2 | 7 of 8 | 7 of 8 | 0 | 2-3 |
+| 3 | 8 of 8 | 6 of 8 | 0 | 3-4 |
+| 5 | 8 of 8 | 8 of 8 | 0 | 4-6 |
+| 7 | 8 of 8 | 7 of 8 | 0 | 5-7 |
+| 11 | 8 of 8 | 8 of 8 | 0 | 7-9 |
+
+Every cause missed in a sweep that found all four was the nondeterministic test reported as
+`UNKNOWN`; the one detection miss at 2 runs was that test giving the same result in every
+run of every arm. No test was ever given a wrong cause.
 
 - **detection** — of the four flaky tests, how many were reported at all
 - **attribution** — of those, how many got the right cause
@@ -109,7 +116,7 @@ regardless of the label printed beside it.
 All three or none. A tool reporting every test as `nondeterminism` scores 100% detection; one
 reporting nothing scores zero false positives.
 
-**The zero at one run is the point.** One run per arm still detects some of the four - three in this sweep, two and three in earlier ones, depending on whether a single shuffle happens to reverse the order pair - because
+**The zero at one run is the point.** One run per arm still detects some of the four - two or three in these sweeps, depending on whether a single shuffle happens to reverse the order pair - because
 an arm landing on a different failure rate than the baseline is evidence even from a single
 run each. What it cannot do is *attribute*: a baseline that runs once cannot flip, so
 nondeterminism can never be excluded, and every finding is `UNKNOWN`.
@@ -118,8 +125,8 @@ That refusal was added after the sweep caught the alternative. The earlier versi
 the nondeterministic test as `clock` at one run per arm — it passed in the single baseline run
 and failed in the single clock run, satisfying every rule. Confident, and wrong.
 
-**Two runs per arm is enough here.** That is a property of this fixture, whose flaky tests
-fail 30–70% of the time. A test failing one run in twenty needs far more: the chance of
+**A few runs per arm is enough here.** That is a property of this fixture, whose flaky
+tests fail 30–70% of the time. A test failing one run in twenty needs far more: the chance of
 *seeing* a flip in `n` runs is `1 - (19/20)^n`, which is 23% at 5 runs and 43% at 11. The
 run count is a bound on what can be seen, not a quality setting.
 
@@ -171,9 +178,23 @@ shared 16-core Windows machine.
 | sqlparse | clock | clock | `..._case_within_cap_under_1s` | 264 |
 | sqlparse | nondeterminism | unknown | `..._case_within_cap_under_1s` | 290 |
 
-The sqlparse tests flagged alongside the plants are in `tests/test_dos_prevention.py` and
-assert that a pathological parse finishes in under one second of wall time - genuinely
-load-dependent. The nondeterminism plant fails half its runs; when all seven baseline
+Run again 2026-10-04 on the same machine while it was quiet: 5 minutes in total, 8 of 8
+plants reported with the right cause, nothing else flagged.
+
+| suite | plant | reported | other tests flagged | seconds |
+|---|---|---|---|---:|
+| toolz | order | order | - | 18 |
+| toolz | hash-seed | hash-seed | - | 15 |
+| toolz | clock | clock | - | 16 |
+| toolz | nondeterminism | nondeterminism | - | 16 |
+| sqlparse | order | order | - | 44 |
+| sqlparse | hash-seed | hash-seed | - | 64 |
+| sqlparse | clock | clock | - | 74 |
+| sqlparse | nondeterminism | nondeterminism | - | 57 |
+
+The sqlparse tests flagged alongside the plants on the busy day are in
+`tests/test_dos_prevention.py` and assert that a pathological parse finishes in under one
+second of wall time - genuinely load-dependent, and not flagged on the quiet day. The nondeterminism plant fails half its runs; when all seven baseline
 runs happen to agree (1.6%) the other arms disagree and the verdict is `UNKNOWN`.
 
 ## 4. What the numbers do not say
