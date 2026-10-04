@@ -107,12 +107,14 @@ def _resolve_python(text: str) -> tuple[str, str]:
         # A venv directory is what people usually have to hand. Accept it.
         for rel in ("Scripts/python.exe", "bin/python", "bin/python3", "python.exe"):
             if (p / rel).is_file():
-                return str((p / rel).resolve()), ""
+                return os.path.abspath(p / rel), ""
         return "", f"--python {text}: a directory, but no Scripts/python.exe or bin/python in it"
     if p.is_file():
         # Absolute, because the suite runs with the repo as its working directory and
-        # a relative path would be resolved from there instead of from here.
-        return str(p.resolve()), ""
+        # a relative path would be resolved from there instead of from here. Not
+        # resolve(): a POSIX venv's bin/python is a symlink to the base interpreter,
+        # and following it runs the base one, outside the venv and its packages.
+        return os.path.abspath(p), ""
     if os.sep not in text and "/" not in text:
         import shutil
 

@@ -127,7 +127,28 @@ def test_a_venv_directory_is_accepted_as_the_interpreter(tmp_path):
     exe.write_bytes(b"")
     got, err = _resolve_python(str(venv))
     assert err == ""
-    assert Path(got) == exe.resolve()
+    assert Path(got) == exe.absolute()
+
+
+def test_a_symlinked_venv_interpreter_is_not_followed_out_of_the_venv(tmp_path):
+    # On Linux a venv's bin/python is a symlink to the base interpreter. Following it
+    # ran the base Python, with its own packages, instead of the venv's (CI found this:
+    # a venv without pytest was reported as able to run the suite).
+    from flake_detective.cli import _resolve_python
+
+    base = tmp_path / "base" / "python"
+    base.parent.mkdir()
+    base.write_bytes(b"")
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    try:
+        link.symlink_to(base)
+    except OSError:
+        pytest.skip("cannot create symlinks here")
+    for arg in (tmp_path / "venv", link):
+        got, err = _resolve_python(str(arg))
+        assert err == ""
+        assert Path(got) == link.absolute()
 
 
 def _err_only(capsys) -> str:
