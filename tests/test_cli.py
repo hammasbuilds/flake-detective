@@ -76,8 +76,14 @@ def test_version_flag_matches_the_package_metadata(capsys):
         main(["--version"])
     assert e.value.code == 0
     assert capsys.readouterr().out.strip() == f"flake-detective {__version__}"
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["project"]["version"] == __version__
+    # The installed metadata always exists; pyproject.toml only in a source checkout (the
+    # installed-wheel CI job copies just tests/, and this read used to fail there).
+    from importlib.metadata import version
+
+    assert version("flake-detective") == __version__
+    if (ROOT / "pyproject.toml").exists():
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        assert project["project"]["version"] == __version__
 
 
 @pytest.mark.parametrize("runs", ["0", "-3", "seven"])

@@ -6,13 +6,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Every version the classifiers claim. `investigate --help` once crashed on
-        # 3.11-3.13 and not on 3.14, the only one it had been run on.
+        # 3.11-3.13 and not on 3.14, the only one it had been run on. Windows too: the
+        # timezone and locale arms behave differently there, and say so.
         python: ["3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -33,7 +35,25 @@ jobs:
         run: uv run pytest -q -m "slow or not slow"
 
       - name: Every subcommand's --help, through the installed entry point
+        shell: bash
         run: |
           uv run flake-detective --version
           uv run flake-detective --help
           for c in investigate bench fixture; do uv run flake-detective $c --help > /dev/null; done
+
+  wheel:
+    # The editable install reads src/ directly. Build the real wheel, install it where
+    # src/ is not, and run the suite and the console script against that.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build pytest
+      - run: python -m build --wheel
+      - run: pip install dist/*.whl
+      - run: flake-detective --version && python -m flake_detective --version
+      - run: |
+          mkdir /tmp/installed && cp -r tests /tmp/installed/
+          cd /tmp/installed && python -m pytest -q -p no:cacheprovider -m "slow or not slow" tests
