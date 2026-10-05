@@ -20,8 +20,10 @@ every condition printed beside the verdict.
 ## Install
 
 ```bash
-pip install flake-detective
+pip install git+https://github.com/hammasbuilds/flake-detective
 ```
+
+PyPI release coming: `pip install flake-detective` will work once it is published.
 
 Python 3.11+, no runtime dependencies. **It needs pytest, but not in its own
 environment:** it runs your suite as a subprocess with the pytest installed wherever
@@ -30,7 +32,7 @@ cannot import pytest, it stops and says so (exit status 2) rather than reporting
 clean suite.
 
 To run the built-in benchmark (`bench`) with no `--python`, pytest has to be next to
-flake-detective: `pip install flake-detective pytest`.
+flake-detective: `pip install git+https://github.com/hammasbuilds/flake-detective pytest`.
 
 ## Quickstart
 
