@@ -215,6 +215,17 @@ class Investigation:
     interrupted: bool = False
     """Ctrl-C stopped the investigation; what is here is from the runs that finished."""
 
+    skipped_arms: list[tuple[str, str]] = field(default_factory=list)
+    """Arms the user asked for that this platform cannot run, as (name, reason).
+
+    `incomplete` cannot cover these: it is derived from arms that exist, and an arm
+    skipped before the plan is built never becomes one. The skip was announced on the
+    progress stream only, so `--quiet` hid it and the JSON had no trace of it at all -
+    the words "timezone" and "locale" appeared nowhere in a report produced by
+    `--arms all`. A machine-readable record of five arms, when seven were requested,
+    reads as a completed search, and a locale-dependent flaky test stays invisible with
+    nothing saying its cause was never looked for."""
+
     @property
     def incomplete(self) -> list[str]:
         """Arms that were asked for and scored no runs at all."""

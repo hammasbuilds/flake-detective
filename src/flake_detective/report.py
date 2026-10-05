@@ -94,6 +94,17 @@ def text(inv: Investigation) -> str:
             out.append(f"  {a.name}: {a.unscored} of {a.attempted}{reason}")
         out.append("")
 
+    # Say what was NOT searched, on both branches. A cause whose arm never ran cannot
+    # be ruled out, and "1 flaky test: 1 clock" otherwise reads as the whole space
+    # having been looked at. This was announced on the progress stream only, so --quiet
+    # hid it and the JSON had no record of it.
+    if inv.skipped_arms:
+        out.append("")
+        out.append("Asked for but not run on this platform, so these causes were not searched:")
+        for name, reason in inv.skipped_arms:
+            out.append(f"  {name:<10} {reason}")
+        out.append("")
+
     if not inv.flakes:
         per_arm = min((a.runs for a in inv.arms if a.runs), default=0)
         if inv.interrupted:
@@ -205,6 +216,10 @@ def as_json(inv: Investigation) -> dict:
         "ok": inv.ok,
         "problem": inv.problem or None,
         "incomplete_arms": inv.incomplete,
+        # Arms the user asked for that this platform cannot run. Without this a report
+        # from `--arms all` listed five arms and mentioned neither timezone nor locale,
+        # which reads as a completed search of every cause.
+        "skipped_arms": [{"name": name, "reason": reason} for name, reason in inv.skipped_arms],
     }
 
 

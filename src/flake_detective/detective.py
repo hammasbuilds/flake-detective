@@ -213,6 +213,11 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
     # Decide every arm before running any, so the progress line can count down to
     # the end of the whole investigation rather than the end of one arm.
     n, t, py, jobs = opts.runs, opts.timeout, opts.python, opts.jobs
+    # Arms asked for that this platform cannot run. Collected here so the finished
+    # report can say what was NOT searched, rather than leaving that on the progress
+    # stream where --quiet hides it and the JSON never saw it.
+    skipped: list[tuple[str, str]] = []
+
     plan: list[tuple[str, int, str, Callable[[Callable[[], None]], Arm]]] = [
         (
             "baseline",
@@ -247,7 +252,9 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
             # exists. On Windows the Olson names are ignored while TZ=UTC shifts by
             # an hour, so an arm built on it can flip a test and then blame
             # "timezone" for something that reproduces nowhere the user runs it.
-            say("timezone: skipped (TZ does not move local time on this platform)")
+            reason = "TZ does not move local time on this platform"
+            say("timezone: skipped (" + reason + ")")
+            skipped.append(("timezone", reason))
         else:
             plan.append(
                 (
@@ -259,7 +266,9 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
             )
     if "locale" in opts.arms:
         if not arms_mod.locale_supported(py):
-            say("locale: skipped (LANG and LC_ALL do not reach the locale on this platform)")
+            reason = "LANG and LC_ALL do not reach the locale on this platform"
+            say("locale: skipped (" + reason + ")")
+            skipped.append(("locale", reason))
         else:
             plan.append(
                 (
@@ -325,6 +334,7 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
         if name == "baseline" and not arm.runs:
             # Nothing to compare the other arms against, so do not spend their runs.
             inv = Investigation(arms=built, total_tests=len(tests))
+            inv.skipped_arms = skipped
             inv.problem = (
                 f"none of the {arm.attempted} baseline runs could be scored, so nothing "
                 "was examined. The first one failed like this:\n    "
@@ -334,6 +344,7 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
             return inv
 
     inv = classify(built, tests)
+    inv.skipped_arms = skipped
     if tests and len(inv.unobserved) == len(tests):
         # Every test skipped, or none ever reached: "no flaky tests" would be true and
         # worthless. Nothing was examined, and that is an error.
