@@ -62,14 +62,17 @@ def test_the_hash_test_passes_under_seed_zero(suite: Path):
 def test_scoring_a_perfect_answer():
     found = {k: v for k, v in fixture.TRUTH.items() if v}
     s = fixture.score(found)
-    assert s["correct_cause"] == s["flaky_in_fixture"] == 4
+    # Derived, not hardcoded: the fixture gained a known positive for each of the four
+    # arms that had none, and a literal 4 here broke a test that was not about the count.
+    assert s["correct_cause"] == s["flaky_in_fixture"] == len(found)
     assert s["missed"] == [] and s["false_positives"] == []
 
 
 def test_scoring_an_empty_answer():
     s = fixture.score({})
+    flaky = [k for k, v in fixture.TRUTH.items() if v]
     assert s["detected"] == 0
-    assert len(s["missed"]) == 4
+    assert len(s["missed"]) == len(flaky)
     assert s["false_positives"] == []
 
 
@@ -93,6 +96,78 @@ def test_shouting_one_cause_at_everything_does_not_score_well():
     perfect detection and perfect attribution on the one cause it ever names.
     """
     s = fixture.score(dict.fromkeys(fixture.TRUTH, "order"))
-    assert s["detected"] == 4
-    assert s["correct_cause"] == 1
-    assert len(s["false_positives"]) == 6
+    flaky = [k for k, v in fixture.TRUTH.items() if v]
+    stable = [k for k, v in fixture.TRUTH.items() if v is None]
+    assert s["detected"] == len(flaky)
+    # Exactly one cause is right, whichever single cause is shouted - that is the point of
+    # the decoys, and it must not grow just because the fixture did.
+    assert s["correct_cause"] == sum(1 for v in fixture.TRUTH.values() if v == "order")
+    assert len(s["false_positives"]) == len(stable)
+
+
+def test_every_arm_has_a_known_positive():
+    """A cause the fixture cannot exhibit is a cause the tool is never scored on.
+
+    `ALL_ARMS` has seven members and `TRUTH` covered four causes, so timezone, locale,
+    parallel and isolation had never been scored against a single known positive - their
+    detection and attribution rates were undefined while `--arms` offered them, and
+    classify.py credits a flip under `parallel` alone to parallelism.
+    """
+    from flake_detective.classify import ARM_CAUSE
+    from flake_detective.detective import ALL_ARMS
+
+    covered = {v for v in fixture.TRUTH.values() if v}
+    for arm in ALL_ARMS:
+        cause = ARM_CAUSE.get(arm)
+        assert cause is not None, f"{arm} maps to no cause"
+        assert cause.value in covered, (
+            f"the {arm} arm has no known positive in the fixture, so its detection and "
+            f"attribution rates are undefined"
+        )
+
+
+def test_a_cause_whose_arm_did_not_run_is_not_counted_as_a_miss():
+    """Otherwise the headline rate measures the platform, not the classifier.
+
+    Giving the four unscored arms a fixture each dropped the reported detection from 100%
+    to 62.5% on Windows, where the timezone and locale arms are no-ops and `parallel`
+    needs pytest-xdist. The three "missed" tests were exactly those three.
+    """
+    flaky = {k: v for k, v in fixture.TRUTH.items() if v}
+    # Nothing found, and only the clock arm searched for.
+    scored = fixture.score({}, searched={"clock"})
+    assert scored["flaky_in_fixture"] == 1, "only the clock cause was scoreable"
+    assert len(scored["missed"]) == 1
+    assert set(scored["unscoreable"].values()) == {v for v in flaky.values()} - {"clock"}
+
+    # And with no `searched` argument the old behaviour holds: everything counts.
+    everything = fixture.score({})
+    assert everything["flaky_in_fixture"] == len(flaky)
+    assert everything["unscoreable"] == {}
+
+
+def test_the_timezone_fixture_passes_in_the_machines_own_zone():
+    """It has to be flaky, not broken.
+
+    The first version asserted `localtime().tm_hour == gmtime().tm_hour`, true only at
+    offset zero, so it failed in every run here and was correctly reported under
+    `always_failed` - "failing, not flaky". A timezone-dependent test passes where it was
+    written and fails when TZ moves, so the fixture bakes in the machine's own offset.
+    """
+    import subprocess
+    import sys
+    import tempfile
+
+    root = Path(tempfile.mkdtemp(prefix="fd-tz-test-"))
+    fixture.write(root)
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "test_timezone_dependent.py", "-q"],
+        capture_output=True,
+        cwd=root,
+        timeout=300,
+        check=False,
+    )
+    assert done.returncode == 0, (
+        "the timezone fixture fails in its own zone, which makes it broken rather than "
+        "flaky: " + done.stdout.decode("utf-8", "replace")[-400:]
+    )

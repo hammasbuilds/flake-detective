@@ -17,6 +17,7 @@ classifier that shouts "order dependence" at everything would score perfectly.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 # Note the cause each file is written to exhibit. The tests are deliberately small and
@@ -72,6 +73,110 @@ def test_unseeded_random():
     assert random.random() < 0.5
 '''
 
+# A template: the expected offset is the one the machine had when the fixture was written.
+# That is the whole shape of the real bug - a test that encodes the developer's timezone as
+# an assumption - and it is also what makes this flaky rather than broken. The first
+# version asserted a UTC property, so it failed in every run on any other machine and was
+# correctly reported as "failing, not flaky".
+TIMEZONE_DEPENDENT = '''\
+"""Encodes the machine's own UTC offset as an assumption. Cause: TIMEZONE.
+
+Passes where it was written and fails when TZ moves. A no-op on Windows, where setting TZ
+does not move the interpreter's idea of local time - the timezone arm reports itself
+skipped there, so this is scoreable only on POSIX.
+"""
+
+import time
+
+# The offset this suite was written under, in seconds east of UTC.
+EXPECTED_OFFSET = {offset}
+
+
+def _offset_now():
+    local = time.localtime()
+    if local.tm_gmtoff is not None:
+        return local.tm_gmtoff
+    return -(time.altzone if local.tm_isdst else time.timezone)
+
+
+def test_local_offset_is_the_one_we_developed_in():
+    assert _offset_now() == EXPECTED_OFFSET
+'''
+
+LOCALE_DEPENDENT = '''\
+"""Asserts case-folding that differs by locale. Cause: LOCALE.
+
+A no-op on Windows for the same reason as the timezone fixture: LANG and LC_ALL do not
+reach the locale there, and the arm says so.
+"""
+
+import locale
+
+
+def test_uppercasing_i_is_ascii():
+    # In a Turkish locale "i".upper() is "\u0130", not "I". The test is asserting an
+    # assumption about the environment, not about the code.
+    try:
+        locale.setlocale(locale.LC_CTYPE, "")
+    except locale.Error:
+        pass
+    assert "i".upper() == "I"
+'''
+
+PARALLEL_DEPENDENT = '''\
+"""Fails when another copy of itself runs at the same time. Cause: PARALLEL."""
+
+import os
+import time
+
+# Beside this file, which the fixture writes into a fresh directory for every run. In the
+# shared temp directory a marker left behind by a crashed run would make this test fail
+# for ever after, which is a broken fixture rather than a flaky test.
+MARKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parallel.lock")
+
+
+def test_exclusive_use_of_a_shared_file():
+    # Not atomic on purpose: two workers both see it missing, both create it, and the
+    # second assertion fails for whichever loses. Serially it always passes.
+    assert not os.path.exists(MARKER), "another worker holds the marker"
+    with open(MARKER, "w", encoding="utf-8") as handle:
+        handle.write(str(os.getpid()))
+    try:
+        time.sleep(0.05)
+    finally:
+        try:
+            os.remove(MARKER)
+        except OSError:
+            pass
+'''
+
+NEEDS_ANOTHER_TEST = '''\
+"""Fails ALONE and passes after its neighbour. Cause: NEEDS_TEST (the isolation arm).
+
+The opposite direction to the order fixture, which passes alone and fails after. The two
+remedies are opposite - stop the other test leaking, versus move that setup into a fixture
+- so the classifier has to tell them apart, and this is the half it was never scored on.
+"""
+
+import test_needs_setup_helper as helper
+
+
+def test_needs_the_helper_to_have_run():
+    assert helper.PREPARED, "nothing prepared the state this test reads"
+'''
+
+NEEDS_ANOTHER_TEST_HELPER = '''\
+"""The test that prepares the state. Stable itself."""
+
+PREPARED = False
+
+
+def test_aaa_prepares():
+    global PREPARED
+    PREPARED = True
+    assert True
+'''
+
 STABLE = '''\
 """Tests that look like the flaky ones and are not. None of these may be flagged."""
 
@@ -121,6 +226,13 @@ FILES = {
     "test_clock_dependent.py": CLOCK_DEPENDENT,
     "test_nondeterministic.py": NONDETERMINISTIC,
     "test_stable.py": STABLE,
+    # One known positive per arm that had none. See TRUTH for which are scoreable on
+    # which platform.
+    "test_timezone_dependent.py": TIMEZONE_DEPENDENT,
+    "test_locale_dependent.py": LOCALE_DEPENDENT,
+    "test_parallel_dependent.py": PARALLEL_DEPENDENT,
+    "test_needs_setup_helper.py": NEEDS_ANOTHER_TEST_HELPER,
+    "test_needs_setup.py": NEEDS_ANOTHER_TEST,
 }
 
 # The answer key. `None` means "must not be reported as flaky at all".
@@ -138,23 +250,69 @@ TRUTH = {
     "test_stable.py::test_clock_but_only_a_duration": None,
     "test_stable.py::test_seeded_random_is_deterministic": None,
     "test_stable.py::test_plain_arithmetic": None,
+    # The four arms that had no known positive at all. Their detection and attribution
+    # rates were undefined while `--arms` offered them.
+    #
+    # `timezone` and `locale` are no-ops on Windows - setting TZ does not move local time
+    # there and LANG/LC_ALL do not reach the locale - so on Windows these two are expected
+    # NOT to be found, and `skipped_arms` says why. ENVIRONMENT_ONLY lists them so a
+    # scorer can require them only where the arm can run.
+    "test_timezone_dependent.py::test_local_offset_is_the_one_we_developed_in": "timezone",
+    "test_locale_dependent.py::test_uppercasing_i_is_ascii": "locale",
+    "test_parallel_dependent.py::test_exclusive_use_of_a_shared_file": "parallel",
+    # Fails alone, passes after its helper: the needs-another-test direction, which is the
+    # opposite remedy to the order fixture and was never scored.
+    "test_needs_setup.py::test_needs_the_helper_to_have_run": "needs-other-test",
+    "test_needs_setup_helper.py::test_aaa_prepares": None,
 }
+
+# Causes whose arm cannot run on every platform. A scorer should require these only where
+# the corresponding arm reports itself available, and `skipped_arms` is how it says.
+ENVIRONMENT_ONLY = {"timezone", "locale"}
+
+# Causes needing more than one worker, so a serial run cannot reproduce them.
+PARALLEL_ONLY = {"parallel"}
 
 
 def write(into: Path) -> Path:
     """Materialise the fixture suite. Returns the directory."""
     into.mkdir(parents=True, exist_ok=True)
+    local = time.localtime()
+    offset = local.tm_gmtoff
+    if offset is None:
+        offset = -(time.altzone if local.tm_isdst else time.timezone)
     for name, body in FILES.items():
+        # Only the timezone fixture is a template, and it has to be calibrated to the
+        # machine writing it: a test that passes here and fails under a different TZ is
+        # timezone-dependent, whereas one asserting a fixed offset is simply wrong
+        # everywhere else and gets reported as failing rather than flaky.
+        if "{offset}" in body:
+            body = body.replace("{offset}", str(offset))
         (into / name).write_text(body, encoding="utf-8", newline="")
     return into
 
 
-def score(found: dict[str, str]) -> dict:
+def score(found: dict[str, str], searched: set[str] | None = None) -> dict:
     """Compare a classification against the answer key.
 
     `found` maps test id -> cause. Anything absent was not reported as flaky.
+
+    `searched` is the set of causes whose arm actually ran. A cause nobody looked for is
+    not a detection failure: on Windows the timezone and locale arms report themselves
+    unavailable and `parallel` needs pytest-xdist in the target's environment, so three of
+    the eight known positives cannot be found there at all. Counting them as misses made
+    the headline rate a property of the platform rather than of the classifier. They are
+    reported under `unscoreable` and excluded from both rates.
+
+    Omitted, every cause is assumed searched, which is the previous behaviour.
     """
-    flaky = {k: v for k, v in TRUTH.items() if v is not None}
+    everything = {k: v for k, v in TRUTH.items() if v is not None}
+    if searched is None:
+        flaky = everything
+        unscoreable: dict[str, str] = {}
+    else:
+        flaky = {k: v for k, v in everything.items() if v in searched}
+        unscoreable = {k: v for k, v in everything.items() if v not in searched}
     stable = [k for k, v in TRUTH.items() if v is None]
 
     def match(key: str) -> str | None:
@@ -172,6 +330,8 @@ def score(found: dict[str, str]) -> dict:
 
     return {
         "flaky_in_fixture": len(flaky),
+        # Known positives whose arm never ran, so neither rate can speak for them.
+        "unscoreable": unscoreable,
         "detected": len(flaky) - len(missed),
         "correct_cause": len(correct),
         "misattributed": misattributed,

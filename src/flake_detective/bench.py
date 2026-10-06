@@ -28,6 +28,37 @@ from pathlib import Path
 from flake_detective import fixture
 from flake_detective.detective import Options, investigate
 from flake_detective.report import as_json
+from flake_detective.types import Cause
+
+
+def searched_causes(inv) -> set[str]:
+    """The causes whose arm actually ran in this investigation.
+
+    Arms map to causes through classify.ARM_CAUSE, which is where that correspondence is
+    already defined; restating it here is how the two would drift apart. `nondeterminism`
+    is not an arm - it is what the baseline alone establishes - so it is always searched.
+    """
+    from flake_detective.classify import ARM_CAUSE
+
+    ran = {arm.name for arm in inv.arms} - {"baseline"}
+    causes = {Cause.NONDETERMINISM.value}
+    for arm in ran:
+        cause = ARM_CAUSE.get(arm)
+        if cause is not None:
+            causes.add(cause.value)
+    # The order arm establishes that a test depends on order. It cannot establish the
+    # DIRECTION - "another test breaks it" versus "it needs another test" - and
+    # classify.py is explicit that the isolation arm is what settles that, with the advice
+    # saying so rather than guessing when it is unsettled. So needs-another-test is only
+    # scoreable when isolation ran: with the default arms the tool correctly reports ORDER
+    # with an undetermined direction, and counting that as a misattribution would penalise
+    # it for refusing to guess.
+    if "order" in ran:
+        causes.add(Cause.ORDER.value)
+    if "isolation" in ran:
+        causes.add(Cause.ORDER.value)
+        causes.add(Cause.NEEDS_TEST.value)
+    return causes
 
 
 def run(
@@ -36,11 +67,19 @@ def run(
     progress=None,
     python: str = "",
     jobs: int = 1,
+    arms: tuple[str, ...] | None = None,
 ) -> dict:
     """Investigate the fixture and score the result against its answer key.
 
     `jobs` is safe to raise here, unlike on an arbitrary suite: the fixture shares no
     file, port or database between processes, so concurrent runs cannot collide.
+
+    `arms` defaults to the same three the tool itself defaults to, so the published
+    numbers keep their meaning. Pass more to score the causes those arms establish: the
+    fixture now has a known positive for every one of the seven arms, and without this
+    parameter four of them could never be reached - `needs-other-test` in particular,
+    whose direction only the isolation arm settles. Causes whose arm did not run are
+    reported under `detail["unscoreable"]` and excluded from both rates.
     """
     say = progress or (lambda *_a, **_k: None)
     started = time.time()
@@ -52,7 +91,14 @@ def run(
         inv = investigate(
             repo,
             "",
-            Options(runs=runs, timeout=timeout, python=python, jobs=jobs, order_seed=0),
+            Options(
+                runs=runs,
+                timeout=timeout,
+                python=python,
+                jobs=jobs,
+                order_seed=0,
+                **({"arms": tuple(arms)} if arms else {}),
+            ),
             progress=say,
         )
 
@@ -71,7 +117,11 @@ def run(
         }
 
     found = {f.test_id: f.cause.value for f in inv.flakes}
-    scored = fixture.score(found)
+    # Which causes were actually looked for. An arm the platform cannot run - timezone and
+    # locale on Windows, parallel without pytest-xdist in the target's environment - finds
+    # nothing, and counting its known positive as a miss would make the detection rate a
+    # property of the machine rather than of the classifier.
+    scored = fixture.score(found, searched=searched_causes(inv))
 
     n_flaky = scored["flaky_in_fixture"]
     n_stable = scored["stable_in_fixture"]

@@ -269,13 +269,42 @@ your `addopts` is kept. A pytest-rerunfailures retry counts as the failure it wa
 
 ### On a suite with known answers
 
-`flake-detective bench` at 7 runs per arm: **4/4 flaky tests detected, 4/4 with the right
-cause, 0 of 6 stable tests flagged.** Not every time: the nondeterministic test fails
-half its runs, so with probability 2/2^7 = 1.6% all seven baseline runs agree, the
-other arms then disagree with each other, and it comes back `UNKNOWN` - attribution
-3/4, never a wrong cause. One of six `bench` runs on 2026-10-03 did exactly that. The stable tests are what make that mean anything:
-three are written to look flaky (one iterates a set, one mutates module state, one reads
-the clock), and one is the other half of the order-dependent pair.
+The fixture holds **8 flaky tests, one per cause the tool can name, and 7 stable ones** -
+and a cause whose arm cannot run on the current machine is reported as unscoreable rather
+than counted as a miss, because otherwise this number measures the platform.
+
+`flake-detective bench` at 7 runs per arm, on Windows with the default three arms:
+
+| | |
+|---|---:|
+| scoreable causes | **4** of 8 |
+| detected | **4 / 4** |
+| right cause | **4 / 4** |
+| stable tests flagged | **0** of 7 |
+| not scoreable here | `timezone`, `locale`, `parallel`, `needs-other-test` |
+
+With `--arms order,hashseed,clock,isolation` it is **5 / 5** detected and attributed, 0 of
+7 flagged - the isolation arm is what settles the *direction* of an order dependence, so
+`needs-other-test` is only scoreable when it runs. Without it the tool correctly reports
+`ORDER` with the direction undetermined and says so in the advice, which is a refusal to
+guess rather than a wrong answer.
+
+`timezone` and `locale` are no-ops on Windows - setting `TZ` there shifts the clock without
+understanding zone names, so an arm built on it would blame "timezone" for something that
+reproduces nowhere a user runs - and `parallel` needs `pytest-xdist` in the target's
+environment. All three report themselves skipped, with the reason.
+
+Not every run is 4/4: the nondeterministic test fails half its runs, so with probability
+2/2^7 = 1.6% all seven baseline runs agree, the other arms then disagree with each other,
+and it comes back `UNKNOWN` - attribution 3/4, never a wrong cause. One of six `bench` runs
+on 2026-10-03 did exactly that.
+
+**One test is 25 points of this detection rate**, which is why the 48-plant study and the
+1,752-test false-positive run further down are the stronger evidence and this is the
+smallest claim here. The stable tests are what make even that mean anything: three are
+written to look flaky (one iterates a set, one mutates module state, one reads the clock),
+one is the other half of the order-dependent pair, and one is the helper the
+needs-another-test fixture depends on.
 
 What a run count buys. `flake-detective bench --sweep` scores one sweep; the
 nondeterministic test is unseeded on purpose, so a single sweep is a draw, not the rate.
