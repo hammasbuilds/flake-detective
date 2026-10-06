@@ -68,7 +68,17 @@ FIX = {
         "it fails when tests share a process pool - a file, port, database or temp "
         "path is fixed rather than per-worker"
     ),
-    Cause.NONDETERMINISM: "it flips with nothing changed - unseeded randomness, or a race",
+    # Three causes, not two. A test that fails on its first run in a fresh checkout and
+    # passes on every one after it looks exactly like a 1-in-N random failure from here -
+    # `failures` counts how many runs failed, not which - so naming only randomness and
+    # races sent anyone with a warm-up or a leftover file hunting in the wrong place.
+    # State written outside the test's own temp directory survives a run and makes the
+    # second attempt pass, and that is the one of the three a reader can check in seconds.
+    Cause.NONDETERMINISM: (
+        "it flips with nothing changed - unseeded randomness, a race, or state left "
+        "behind by an earlier run (a cache, a file outside tmp_path, a database row). "
+        "If it failed once and then never again, look for the state first"
+    ),
     Cause.UNKNOWN: "it flipped, but no single perturbation explains it",
 }
 

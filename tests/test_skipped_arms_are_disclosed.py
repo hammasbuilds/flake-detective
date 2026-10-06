@@ -9,7 +9,8 @@ from flake_detective.types import Arm, Investigation
 
 
 def _investigation() -> Investigation:
-    inv = Investigation(arms=[Arm(name="baseline", description="2 identical runs", attempted=2, runs=2)], total_tests=3)
+    baseline = Arm(name="baseline", description="2 identical runs", attempted=2, runs=2)
+    inv = Investigation(arms=[baseline], total_tests=3)
     inv.skipped_arms = [
         ("timezone", "TZ does not move local time on this platform"),
         ("locale", "LANG and LC_ALL do not reach the locale on this platform"),
@@ -49,6 +50,7 @@ def test_the_text_report_says_which_causes_were_not_searched() -> None:
 
 def test_nothing_is_added_when_every_arm_ran() -> None:
     """No skips means no extra section - the usual report must stay unchanged."""
-    inv = Investigation(arms=[Arm(name="baseline", description="2 identical runs", attempted=2, runs=2)], total_tests=3)
+    baseline = Arm(name="baseline", description="2 identical runs", attempted=2, runs=2)
+    inv = Investigation(arms=[baseline], total_tests=3)
     assert as_json(inv)["skipped_arms"] == []
     assert "not searched" not in text(inv)
