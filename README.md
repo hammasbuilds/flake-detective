@@ -428,6 +428,17 @@ Full details: [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/
   one run in fifty is almost certainly still there after seven.
 - **It is not fast.** See "What it costs" above. Every run is a real pytest
   process, by design: that is what makes the conditions controllable.
+- **One cause can hide another, and the report says when.** Attribution works by
+  exclusion: an arm counts when its failure rate *differs* from the baseline's. That needs
+  the baseline to have room to differ. A test that fails in **every** baseline run cannot
+  fail more often under any arm, so an arm sitting at the same rate was never really
+  asked — measured on a test that is both order-dependent and clock-dependent, where the
+  clock arm reads 1.0 because the order dependence fails it there too, and the clock
+  dependence is invisible. Follow the suggested fix and the test still fails half the
+  time. Those arms are now named in the report and in `masked_arms`, with
+  `second_cause_possible`, so the finding is "this cause, and a second one is not ruled
+  out" rather than "this cause". Finding the second one means fixing the first and running
+  again; nothing here can do it in one pass.
 - **The environment arms do nothing on Windows, and say so.** `TZ` only moves local time
   where `time.tzset` exists, and `LC_ALL` never reaches `locale.getlocale()` on Windows.
   Measured there, `TZ=Pacific/Kiritimati` and `TZ=America/New_York` return the *same*

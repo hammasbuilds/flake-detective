@@ -169,6 +169,19 @@ class Flake:
     localisation: dict | None = None
     """What `--localise` did for this test: outcome, probes, and a one-line summary."""
 
+    masked_arms: list[str] = field(default_factory=list)
+    """Arms whose evidence this finding's own cause made uninformative.
+
+    Attribution is by exclusion, which needs the baseline to have room to differ. A test
+    failing in EVERY baseline run cannot fail more often under any arm, so an arm at the
+    same rate was never really asked. Reproduced on a test that is both order-dependent
+    and clock-dependent: baseline 1.0, clock 1.0, and the clock dependence invisible -
+    follow the suggested fix and the test still fails half the time.
+
+    Non-empty means a second cause is NOT ruled out, and the way to see it is to fix this
+    one and run again.
+    """
+
     errored: bool = False
     """Some of its failures were errors in fixture setup or teardown, not in the test."""
 
@@ -194,6 +207,11 @@ class Flake:
             row["needs" if self.cause is Cause.NEEDS_TEST else "caused_by"] = self.culprits
         if self.localisation:
             row["localisation"] = self.localisation
+        if self.masked_arms:
+            # A second cause is not ruled out. Kept out of the row when empty, so a
+            # consumer can treat its presence as the warning it is.
+            row["masked_arms"] = self.masked_arms
+            row["second_cause_possible"] = True
         return row
 
 

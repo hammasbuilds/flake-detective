@@ -189,6 +189,29 @@ def _interaction(
     )
 
 
+def _masked_by(arms: list[Arm], baseline: Arm | None, test_id: str) -> list[str]:
+    """Arms whose evidence a saturated baseline makes uninformative.
+
+    Attribution is by exclusion - an arm counts when its rate DIFFERS from the baseline -
+    and that reasoning needs the baseline to have room to differ. A test that fails in
+    EVERY baseline run cannot fail more often under any arm, so an arm sitting at the same
+    rate has not been cleared; it has not been asked. Those arms are named so a second
+    cause is reported as unruled-out rather than as absent.
+
+    Only when the baseline is saturated at 1.0. A baseline of 0.0 is the ordinary case and
+    leaves every arm free to rise above it.
+    """
+    if baseline is None or not baseline.seen(test_id):
+        return []
+    if baseline.rate(test_id) != 1.0:
+        return []
+    return sorted(
+        a.name
+        for a in arms
+        if a.name != "baseline" and a.seen(test_id) and a.rate(test_id) == 1.0
+    )
+
+
 def classify(arms: list[Arm], tests: list[str]) -> Investigation:
     by_name = {a.name: a for a in arms}
     baseline = by_name.get("baseline")
@@ -270,19 +293,25 @@ def classify(arms: list[Arm], tests: list[str]) -> Investigation:
             )
             continue
 
+        # Arms a saturated baseline left unasked. Computed once and attached to whichever
+        # finding is made below, because the caveat is about the evidence, not the cause.
+        masked = _masked_by(ran, baseline, test_id)
+
         if env:
             arm = env[0]
-            out.flakes.append(
-                Flake(
-                    test_id,
-                    ARM_CAUSE.get(arm.name, Cause.UNKNOWN),
-                    _evidence(arm, baseline, test_id),
-                    rates,
-                )
+            found = Flake(
+                test_id,
+                ARM_CAUSE.get(arm.name, Cause.UNKNOWN),
+                _evidence(arm, baseline, test_id),
+                rates,
             )
+            found.masked_arms = [name for name in masked if name != arm.name]
+            out.flakes.append(found)
             continue
 
-        out.flakes.append(_interaction(test_id, inter, baseline, by_name, rates))
+        found = _interaction(test_id, inter, baseline, by_name, rates)
+        found.masked_arms = [name for name in masked if name not in {a.name for a in inter}]
+        out.flakes.append(found)
 
     for f in out.flakes:
         f.errored = any(a.errors.get(f.test_id) for a in arms)

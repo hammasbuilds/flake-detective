@@ -131,3 +131,85 @@ def test_a_one_run_baseline_establishes_no_cause():
 def test_two_runs_is_enough_to_attribute():
     inv = classify([arm("baseline", 2), arm("clock", 2, a=2)], TESTS)
     assert causes(inv) == {"t.py::a": Cause.CLOCK}
+
+
+class TestASaturatedBaselineHidesOtherCauses:
+    """Attribution by exclusion needs the baseline room to differ.
+
+    An arm is implicated when its failure rate DIFFERS from the baseline's. That is sound
+    while the baseline can move. When a dominant cause fails the test in EVERY baseline
+    run, every other arm also fails it in every run, nothing differs, and no second cause
+    can be seen.
+
+    Reproduced on a test that is both order-dependent and clock-dependent: baseline 1.0,
+    order 0.44, isolation 0.0, clock 1.0 - reported as plain ORDER with the fix "reset that
+    state in a fixture". Follow it and the test still fails half the time, and the next run
+    gives the same confident single answer.
+
+    This does not find the second cause; that needs a re-run after the first is fixed. It
+    reports that one is not ruled out.
+    """
+
+    def _arms(self, rates: dict[str, float], runs: int = 10):
+        """Arms whose rate for one test is as given."""
+        from flake_detective.types import Arm
+
+        test = "t.py::test_one"
+        out = []
+        for name, rate in rates.items():
+            arm = Arm(name=name, description=name, runs=runs)
+            arm.observed[test] = runs
+            arm.failures[test] = round(rate * runs)
+            out.append(arm)
+        return out, test
+
+    def test_a_masked_arm_is_named_when_the_baseline_is_saturated(self):
+        from flake_detective.classify import classify
+
+        arms, test = self._arms(
+            {"baseline": 1.0, "order": 0.4, "hashseed": 1.0, "clock": 1.0}
+        )
+        inv = classify(arms, [test])
+        assert len(inv.flakes) == 1
+        found = inv.flakes[0]
+        assert found.cause.value == "order"
+        assert set(found.masked_arms) == {"clock", "hashseed"}, (
+            "arms sitting at a saturated baseline were treated as ruled out"
+        )
+        row = found.as_row()
+        assert row["second_cause_possible"] is True
+        assert set(row["masked_arms"]) == {"clock", "hashseed"}
+
+    def test_nothing_is_masked_when_the_baseline_has_room_to_move(self):
+        """The ordinary case: a baseline of 0.0 leaves every arm free to rise above it."""
+        from flake_detective.classify import classify
+
+        arms, test = self._arms(
+            {"baseline": 0.0, "order": 0.4, "hashseed": 0.0, "clock": 0.0}
+        )
+        inv = classify(arms, [test])
+        assert len(inv.flakes) == 1
+        assert inv.flakes[0].masked_arms == []
+        assert "masked_arms" not in inv.flakes[0].as_row()
+
+    def test_the_arm_that_was_blamed_is_not_listed_as_masked(self):
+        """It differed from the baseline, so it was asked and answered."""
+        from flake_detective.classify import classify
+
+        arms, test = self._arms({"baseline": 1.0, "clock": 0.3, "hashseed": 1.0})
+        inv = classify(arms, [test])
+        found = inv.flakes[0]
+        assert found.cause.value == "clock"
+        assert found.masked_arms == ["hashseed"]
+
+    def test_the_report_tells_the_user(self):
+        """Computing it and keeping it in memory is the defect, not the fix."""
+        from flake_detective.classify import classify
+        from flake_detective.report import text
+
+        arms, test = self._arms(
+            {"baseline": 1.0, "order": 0.4, "hashseed": 1.0, "clock": 1.0}
+        )
+        rendered = text(classify(arms, [test]))
+        assert "were not ruled out" in rendered
+        assert "clock, hashseed" in rendered

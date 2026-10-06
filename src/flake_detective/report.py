@@ -167,6 +167,19 @@ def text(inv: Investigation) -> str:
                         out.append(f"      {c}")
             if f.localisation:
                 out.append(f"    localise: {f.localisation['summary']}")
+            if f.masked_arms:
+                # Attribution is by exclusion, which needs the baseline room to differ.
+                # This test failed in every baseline run, so these arms could not fail it
+                # more often and were never really asked - a second cause is not ruled
+                # out, and the way to see it is to fix this one and run again.
+                out.append(
+                    "    ! it failed in every baseline run, so "
+                    + ", ".join(f.masked_arms)
+                    + " could not show a difference and were not ruled out. Fix the cause"
+                )
+                out.append(
+                    "      above and run again: a second cause would be invisible here."
+                )
             out.append(f"    fix: {f.fix}")
             out.append("")
 
