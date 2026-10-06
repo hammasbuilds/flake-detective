@@ -53,7 +53,13 @@ class Localisation:
     """pytest invocations spent. Reported because it is the cost of this feature."""
 
     outcome: str = "not reproducible"
-    """One of: single, combination, not reproducible."""
+    """One of: single, combination, not reproducible, unstable alone.
+
+    "unstable alone" means the victim passed on some runs and failed on others with no
+    other test running at all, so there is no direction to search in. It is reported
+    rather than resolved, because the direction decides which cause and which suggested
+    fix the finding carries.
+    """
 
     direction: str = ""
     """"broken" (passes alone, fails after the culprits), "needs" (fails alone, passes
@@ -65,6 +71,12 @@ class Localisation:
 
     def describe(self) -> str:
         n = f"{self.probes} run{'s' if self.probes != 1 else ''}"
+        if self.outcome == "unstable alone":
+            return (
+                f"{self.victim} is not stable on its own - it both passed and failed with "
+                f"no other test running, so there is no direction to search in and no "
+                f"culprit is named ({n})"
+            )
         if not self.direction:
             return f"{self.victim}: could not be run on its own ({n})"
         if not self.culprits:
@@ -124,6 +136,13 @@ def _fails(
     return victim in obs.failed
 
 
+# Runs of the victim on its own before the direction of the search is believed. One run
+# cannot flip, and the direction decides which way the bisection searches AND which cause
+# and which suggested fix the finding ends up carrying - so a single run here can invert
+# the advice. Three is the smallest number that can disagree with itself.
+ALONE_RUNS = 3
+
+
 def localise(
     repo: Path,
     victim: str,
@@ -147,10 +166,22 @@ def localise(
         out.probes += 1
         return _fails(repo, prefix, victim, timeout, python, epoch, target, rootdir)
 
-    # Alone first: it fixes the direction of the search.
-    alone = probe([])
-    if alone is None:
+    # Alone first: it fixes the direction of the search, so it is repeated. A victim that
+    # passes alone on one run and fails alone on the next has no direction to fix, and
+    # guessing one from whichever run happened first produced the opposite answer 3 times
+    # in 8 on a test with two causes.
+    attempts: list[bool] = []
+    for _ in range(ALONE_RUNS):
+        result = probe([])
+        if result is None:
+            return out
+        attempts.append(result)
+    if len(set(attempts)) > 1:
+        # Reported, not guessed. The caller keeps whatever cause the arms established;
+        # `_apply` only rewrites it when a direction was determined.
+        out.outcome = "unstable alone"
         return out
+    alone = attempts[0]
     out.direction = "needs" if alone else "broken"
     # What the prefix must reproduce: a failure if it passes alone, a pass if it fails.
     want = not alone

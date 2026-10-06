@@ -84,7 +84,13 @@ def test_a_test_that_fails_alone_whatever_runs_first_names_nothing(tmp_path):
     assert result.direction == "needs"
     assert result.outcome == "not reproducible"
     assert not result.found
-    assert result.probes == 2, "alone, then with everything; no bisection"
+    # ALONE_RUNS on its own, then once with everything in front. The point of the
+    # assertion is that no bisection happened, so it is written as that rather than as a
+    # bare number: the alone run is repeated now, because one run cannot flip and the
+    # direction it fixes decides which cause the finding ends up carrying.
+    from flake_detective.localise import ALONE_RUNS
+
+    assert result.probes == ALONE_RUNS + 1, "alone, then with everything; no bisection"
     assert "still fails with every other test" in result.describe()
 
 
@@ -148,3 +154,51 @@ def test_localise_works_when_repo_is_a_subfolder_of_the_rootdir(tmp_path):
     result = localise(tmp_path / "pkg", c.tests[1], c.tests, timeout=300, rootdir=c.rootdir)
     assert result.direction == "broken", result.describe()
     assert result.culprits == ["pkg/tests/test_m.py::test_a"]
+
+
+def test_a_victim_unstable_on_its_own_gets_no_direction(tmp_path):
+    """One run cannot flip, and the direction it fixes decides the advice.
+
+    The direction came from a SINGLE un-repeated run of the victim alone. On a test that
+    is both order-dependent and clock-dependent, the same call answered "passes on its own
+    and fails after the culprit" 5 times in 8 and "fails on its own - no enabling test
+    found" 3 times in 8. Those are opposite answers, and `detective._apply` lets the
+    direction rewrite an UNDIRECTED ORDER finding into NEEDS_TEST - changing the suggested
+    fix from "another test leaks state, reset it in a fixture" to "it relies on state
+    another test creates, move that setup into a fixture". Opposite remedies.
+
+    `classify.py` already states the rule for the baseline: a single run is not a control,
+    instability is reported and the cause withheld. This is the same rule here.
+    """
+    from flake_detective.localise import ALONE_RUNS, localise
+
+    repo = _suite(tmp_path)
+    # Fails on exactly half of its runs, with nothing else running: a counter on disk, so
+    # the flip does not depend on timing or hash order.
+    (repo / "tests" / "test_coinflip.py").write_text(
+        "import pathlib\n\n\n"
+        "def test_coinflip():\n"
+        f"    counter = pathlib.Path(r'{tmp_path / 'runs.txt'}')\n"
+        "    n = int(counter.read_text()) if counter.exists() else 0\n"
+        "    counter.write_text(str(n + 1))\n"
+        "    assert n % 2 == 0\n",
+        encoding="utf-8",
+    )
+
+    result = localise(
+        repo,
+        "tests/test_coinflip.py::test_coinflip",
+        [
+            "tests/test_innocent_0.py::test_innocent_0",
+            "tests/test_coinflip.py::test_coinflip",
+        ],
+        timeout=300,
+    )
+
+    assert result.outcome == "unstable alone"
+    assert result.direction == "", "a direction was fixed from runs that disagreed"
+    assert not result.found, "a culprit was named for a test that is unstable by itself"
+    assert result.probes == ALONE_RUNS, "it should stop as soon as the runs disagree"
+    assert "not stable on its own" in result.describe()
+    # And the machine-readable form must not claim a direction either.
+    assert result.as_dict()["direction"] == "unknown"

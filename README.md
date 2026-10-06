@@ -328,7 +328,9 @@ on import inside that repo's own virtual environment (`pandas.errors` hits a nat
 overflow, exit code 0xC0000FD unrelated to flake-detective) — reported honestly as "nothing
 was examined," not folded into the clean total.
 
-The fourteen scored, current counts: urdu-nlp-toolkit (576 tests), blast-radius (237),
+The fourteen scored, with the suite sizes they had **when they were scored on
+2026-09-29** - three have grown since, and restating today's numbers would
+misdescribe what was actually examined: urdu-nlp-toolkit (576 tests), blast-radius (237),
 clcuv-surveillance (203), suite-auditor (108), credit-risk-engine (108), primer-designer
 (94), demand-forecast-platform (77), insurance-mlops (111), repo-surgeon (47),
 docstring-drift (42), perf-hunter (42), pr-referee (37), model-serving-platform (40),
