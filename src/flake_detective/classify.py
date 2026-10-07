@@ -104,8 +104,45 @@ def _flipped(arm: Arm, test_id: str) -> bool:
     return arm.seen(test_id) > 1 and not arm.is_stable(test_id)
 
 
+# How many discordant observations it takes before a rate difference means anything.
+#
+# One does not. Measured on suite-auditor at five runs per arm: a test that fails 1.5% of
+# the time from its own internal randomness came back `0 of 5 baseline, 1 of 5 shuffled`,
+# and this returned True, so the test was reported as an ORDER dependence. It is not one.
+# A single failure in one arm and none in the baseline is exactly what a low-rate
+# intrinsic flake looks like, and calling it order dependence sends somebody to look for
+# a leaking test that does not exist - the most expensive kind of wrong answer this tool
+# can give.
+MIN_DISCORDANT = 2
+
+
 def _differs(arm: Arm, baseline: Arm, test_id: str) -> bool:
-    """Did this arm land on a different failure rate than the baseline?"""
+    """Did this arm land on a failure rate the baseline's cannot explain?
+
+    Not "a different rate" - a rate that differs by more than `MIN_DISCORDANT`
+    observations from what the baseline predicts for this arm's run count. Below that,
+    the arm and the baseline are compatible with one underlying rate, which is the
+    hypothesis a cause has to beat.
+    """
+    if not arm.seen(test_id) or not baseline.seen(test_id):
+        return False
+    if abs(arm.rate(test_id) - baseline.rate(test_id)) <= 1e-9:
+        return False
+    observed = arm.failures.get(test_id, 0)
+    expected = baseline.rate(test_id) * arm.seen(test_id)
+    return abs(observed - expected) >= MIN_DISCORDANT - 1e-9
+
+
+def _any_rate_difference(arm: Arm, baseline: Arm, test_id: str) -> bool:
+    """Did this arm land on ANY different failure rate than the baseline?
+
+    The reporting question, not the attribution one. "Did this test behave differently
+    anywhere" needs the loose comparison - a test that did is worth telling somebody
+    about even when nothing can be blamed - while "was this arm the cause" needs
+    `_differs`, which asks for enough discordant observations to beat one underlying
+    rate. Using the strict test for both made a test that behaved differently vanish
+    from the report instead of appearing with no cause.
+    """
     if not arm.seen(test_id) or not baseline.seen(test_id):
         return False
     return abs(arm.rate(test_id) - baseline.rate(test_id)) > 1e-9
@@ -255,7 +292,10 @@ def classify(arms: list[Arm], tests: list[str]) -> Investigation:
             # in the single clock run. Instability is still an observation worth reporting;
             # the cause is an inference, and there is nothing here to infer it from.
             unstable = (
-                any(_flipped(a, test_id) or _differs(a, baseline, test_id) for a in others)
+                any(
+                    _flipped(a, test_id) or _any_rate_difference(a, baseline, test_id)
+                    for a in others
+                )
                 if baseline
                 else any(_flipped(a, test_id) for a in others)
             )
@@ -273,8 +313,46 @@ def classify(arms: list[Arm], tests: list[str]) -> Investigation:
                 )
             continue
 
-        implicated = [a for a in others if _flipped(a, test_id) or _differs(a, baseline, test_id)]
+        # Implicated means "this arm's failure count is one the baseline's rate cannot
+        # explain". Flipping WITHIN an arm used to be enough on its own, and it is not:
+        # a test that fails 1 of 5 shuffled runs and 0 of 5 baseline runs has flipped
+        # inside the order arm, and is equally explained by a low intrinsic failure rate
+        # the baseline did not happen to see. Measured on suite-auditor, where exactly
+        # that was reported as ORDER and the test turns out to fail 1.5% of the time
+        # alone. `_differs` carries the count test; `_flipped` still implicates when
+        # there is no baseline observation to compare against.
+        # Reaching here means the baseline observed this test at least twice, so there
+        # is always a rate to compare against and `_differs` is the whole rule. (A
+        # baseline that never saw the test is handled above, as UNKNOWN: with no control
+        # there is nothing to infer a cause from. An earlier version of this line carried
+        # a `not baseline.seen(...)` clause for that case, which was unreachable.)
+        implicated = [a for a in others if _differs(a, baseline, test_id)]
         if not implicated:
+            # Nothing is implicated strongly enough to name - but if the test behaved
+            # differently somewhere, saying nothing is wrong. It is flaky and the cause
+            # is not established, which is a different statement from "not flaky", and
+            # the one that used to be given as ORDER.
+            nearly = [
+                a for a in others if _any_rate_difference(a, baseline, test_id)
+            ]
+            if nearly:
+                out.flakes.append(
+                    Flake(
+                        test_id,
+                        Cause.UNKNOWN,
+                        "failed "
+                        + _count(baseline, test_id)
+                        + " baseline runs and "
+                        + ", ".join(
+                            f"{_count(a, test_id)} {_LABEL.get(a.name, a.name)}"
+                            for a in nearly
+                        )
+                        + f": a difference of fewer than {MIN_DISCORDANT} observations, "
+                        "which one underlying failure rate explains. More runs would "
+                        "separate a cause from plain nondeterminism",
+                        rates,
+                    )
+                )
             continue
 
         env = [a for a in implicated if a.name not in INTERACTION]

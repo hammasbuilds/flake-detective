@@ -220,6 +220,16 @@ class Investigation:
     arms: list[Arm] = field(default_factory=list)
     flakes: list[Flake] = field(default_factory=list)
     total_tests: int = 0
+
+    provenance: dict = field(default_factory=dict)
+    """What was examined, and with what: the repo, its git revision if it has one, the
+    interpreter, and when.
+
+    A finding about somebody else's suite is not checkable without it, and docs/RESULTS.md
+    shows what that costs. It published "blast-radius, 28 tests, no flaky tests found" -
+    a claim about a revision nobody recorded, and that repository now has 284 tests. The
+    sentence reads as being about the current suite and is not.
+    """
     always_failed: list[str] = field(default_factory=list)
     """Tests that failed in every run of every arm.
 

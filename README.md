@@ -333,29 +333,44 @@ contends with.
 
 What a run count buys. `flake-detective bench --sweep` scores one sweep; the
 nondeterministic test is unseeded on purpose, so a single sweep is a draw, not the rate.
-Eight sweeps on 2026-10-04 (`--sweep --json`), counting how many found all four flaky
+Eight sweeps on 2026-10-07 (`--sweep --json`), counting how many found all four flaky
 tests and how many also named all four causes right:
 
 | runs/arm | all 4 detected | and all 4 causes right | stable tests flagged | secs per point |
 |---:|---:|---:|---:|---:|
-| 1 | 0 of 8 (2-3 of 4 found) | 0 of 8 | 0 | 2-3 |
-| 2 | 7 of 8 | 7 of 8 | 0 | 2-3 |
-| 3 | 8 of 8 | 6 of 8 | 0 | 3-4 |
-| 5 | 8 of 8 | 8 of 8 | 0 | 4-6 |
-| 7 | 8 of 8 | 7 of 8 | 0 | 5-7 |
-| 11 | 8 of 8 | 8 of 8 | 0 | 7-9 |
+| 1 | 7 of 8 | 0 of 8 | 0 | 3-4 |
+| 2 | 8 of 8 | 0 of 8 | 0 | 3-4 |
+| 3 | 8 of 8 | 7 of 8 | 0 | 4-5 |
+| 5 | 8 of 8 | 7 of 8 | 0 | 6-8 |
+| 7 | 8 of 8 | 8 of 8 | 0 | 7-8 |
+| 11 | 8 of 8 | 8 of 8 | 0 | 10-13 |
 
-The one miss at 2 runs is detection: the nondeterministic test gave the same result in
-every run of every arm, so nothing flagged it. Every other miss is that test coming back
-`UNKNOWN`: it fails
-about half its runs, so sometimes every baseline run agrees, the control shows no flip, and
-the other arms then disagree with each other. Nothing in those sweeps was given a wrong
+**Detection and attribution now separate cleanly, and that is a change.** The earlier
+table read 0 of 8 detected at one run and 7 of 8 *attributed* at two, which was the same
+rule answering two different questions. An arm is implicated now only when its failure
+count is one the baseline's rate cannot explain - a difference of at least two
+observations - because one cannot distinguish a cause from a low intrinsic failure rate
+the baseline did not happen to see. At two runs per arm, two discordant observations is
+the most that can exist, so almost nothing clears the bar and attribution is 0 of 8: the
+honest answer for two runs, where the old rule gave 7 of 8 by reading a single flip as
+proof. Detection rises in exchange, because a test that behaved differently is now
+*reported* with no cause rather than dropped.
+
+That change came from running this tool over `suite-auditor`, where it reported a test as
+an ORDER dependence on 0 of 5 baseline runs against 1 of 5 shuffled. Running that
+assertion 200 times alone, in one process, it fails **1.5% of the time**: it is
+nondeterminism, the order arm simply saw it, and sending somebody to look for a leaking
+test is the most expensive wrong answer this tool can give. (The 1.5% had a cause of its
+own, in suite-auditor's nondeterminism guard, which is fixed there.)
+
+Every remaining miss is the nondeterministic test coming back `UNKNOWN`: it fails about
+half its runs, so sometimes every baseline run agrees, the control shows no flip, and the
+other arms then disagree with each other. Nothing in those sweeps was given a wrong
 cause, and no stable test was ever flagged.
 
-The zero attribution at one run is deliberate. One run per arm finds instability and
-**refuses to name a cause**, because a baseline that runs once cannot flip, and a control
-that cannot flip cannot rule out nondeterminism. Before that refusal existed, the one-run
-pass reported the nondeterministic test as `clock` — confidently, and wrongly.
+The zero attribution at one run is deliberate for a second reason. One run per arm finds
+instability and **refuses to name a cause**, because a baseline that runs once cannot
+flip, and a control that cannot flip cannot rule out nondeterminism.
 
 ### On real suites
 

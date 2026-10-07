@@ -10,6 +10,8 @@ because a test that flips under identical conditions also flips when the order c
 from __future__ import annotations
 
 import random
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,6 +23,44 @@ from flake_detective.classify import UNDIRECTED, classify
 from flake_detective.types import Arm, Cause, Investigation
 
 ARMS = ("order", "hashseed", "clock")
+
+
+def _provenance(repo: Path, opts: Options, arms: tuple[str, ...]) -> dict:
+    """What was examined and with what, so a finding about a suite can be checked.
+
+    `git rev-parse` through subprocess rather than any library: this package has no
+    dependencies and is not about to acquire one for a provenance line. A target that is
+    not a git checkout simply has no revision, which is said rather than guessed.
+    """
+    revision = ""
+    dirty = False
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )  # fmt: skip
+        if done.returncode == 0:
+            revision = done.stdout.strip()
+            status = subprocess.run(
+                ["git", "-C", str(repo), "status", "--porcelain"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )  # fmt: skip
+            dirty = bool(status.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {
+        "repo": repo.name,
+        "revision": revision or "not a git checkout",
+        # A run over a dirty tree describes a state that exists on one machine only, so
+        # the result is not reproducible and must not read as though it were.
+        **({"uncommitted_changes": True} if dirty else {}),
+        "python": sys.version.split()[0],
+        "platform": sys.platform,
+        "runs_per_arm": opts.runs,
+        "arms": list(arms),
+        "order_seed": opts.order_seed,
+        "when": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
+    }
 
 # Available but not on by default. Each costs a full set of runs, and the three
 # above catch the causes that turn up most; these three catch the ones that turn up
@@ -345,6 +385,7 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
 
     inv = classify(built, tests)
     inv.skipped_arms = skipped
+    inv.provenance = _provenance(repo, opts, tuple(a.name for a in built))
     if tests and len(inv.unobserved) == len(tests):
         # Every test skipped, or none ever reached: "no flaky tests" would be true and
         # worthless. Nothing was examined, and that is an error.

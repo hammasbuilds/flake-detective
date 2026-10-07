@@ -213,3 +213,69 @@ class TestASaturatedBaselineHidesOtherCauses:
         rendered = text(classify(arms, [test]))
         assert "were not ruled out" in rendered
         assert "clock, hashseed" in rendered
+
+
+def test_one_discordant_observation_names_no_cause():
+    """The case that sent somebody looking for a leaking test that does not exist.
+
+    flake-detective was run over suite-auditor and reported
+    `test_a_function_that_disagrees_with_its_own_repeat_is_not_a_gap` as an ORDER
+    dependence: 0 of 5 baseline runs, 1 of 5 shuffled. Running that assertion 200 times
+    alone, in one process, with no other test involved, it fails **1.5% of the time** -
+    so it is nondeterminism, and the order arm simply happened to be the one that saw it.
+
+    Flipping within an arm used to implicate that arm on its own. One failure there and
+    none in the baseline is equally explained by a low intrinsic rate the baseline did
+    not happen to observe, and naming a cause from it is the most expensive wrong answer
+    this tool can give: it sends a reader to look for a test that leaks state.
+    """
+    inv = classify([arm("baseline", 5), arm("order", 5, a=1)], TESTS)
+    assert causes(inv) == {"t.py::a": Cause.UNKNOWN}
+    assert "fewer than 2 observations" in inv.flakes[0].evidence
+    # Still reported. "Not established" is not "not flaky", and dropping it would be
+    # worse than naming the wrong cause.
+    assert inv.by_cause() == {"unknown": 1}
+
+
+def test_two_discordant_observations_are_enough():
+    """The threshold has to let a real cause through, or the tool finds nothing."""
+    inv = classify([arm("baseline", 5), arm("order", 5, a=2)], TESTS)
+    assert causes(inv) == {"t.py::a": Cause.ORDER}
+
+
+def test_a_rate_difference_is_measured_against_the_baseline_not_against_zero():
+    """A noisy baseline raises the bar, which is the point of having one.
+
+    Baseline 2 of 5 and clock 3 of 5 is one extra failure, not three: the arm has to beat
+    what the baseline's own rate predicts for it, not beat zero.
+    """
+    inv = classify([arm("baseline", 5, a=2), arm("clock", 5, a=3)], TESTS)
+    assert causes(inv)["t.py::a"] == Cause.NONDETERMINISM, (
+        "a baseline that flips on its own is nondeterminism, whatever the arms then show"
+    )
+
+
+def test_no_baseline_observation_means_no_cause_however_the_arms_behaved():
+    """With no control there is nothing to infer from, and the tool says so.
+
+    `observed` is a dict of test id -> runs that saw it, and `seen()` consults it only
+    when `tracked` is set. The first version of this test assigned a SET and left
+    `tracked` alone, so the baseline still reported five observations and the assertion
+    passed through a different branch entirely - green, and about nothing.
+
+    Written to assert that a flip inside an arm would be credited to that arm when the
+    baseline never saw the test. It is not, and should not be: the "no usable control"
+    branch reports UNKNOWN first. The clause added to the implication rule for that case
+    was unreachable and is gone.
+    """
+    base = arm("baseline", 5)
+    base.tracked = True
+    base.observed = {t: 5 for t in TESTS if t != "t.py::a"}
+    other = arm("order", 5, a=1)
+    other.tracked = True
+    other.observed = dict.fromkeys(TESTS, 5)
+    assert base.seen("t.py::a") == 0, "the baseline must not have observed this test"
+
+    inv = classify([base, other], TESTS)
+    assert causes(inv).get("t.py::a") == Cause.UNKNOWN
+    assert "too few to observe a flip" in inv.flakes[0].evidence

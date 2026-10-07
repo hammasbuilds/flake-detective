@@ -207,6 +207,8 @@ def text(inv: Investigation) -> str:
 
 def as_json(inv: Investigation) -> dict:
     return {
+        # First, so a reader of the raw JSON sees what was examined before what was found.
+        **({"_run": inv.provenance} if inv.provenance else {}),
         "total_tests": inv.total_tests,
         "seconds": round(inv.seconds, 1),
         "seed": inv.seed,
