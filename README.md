@@ -391,6 +391,18 @@ re-run from this repository alone (the third-party study below can):
 |---|---:|---:|---:|---:|
 | deep (measured before the outcome-reading refactor, not re-run) | 5 | 166 | 5 (20 runs per suite) | **0** |
 | wide (re-measured 2026-09-29) | 14 scored + 1 environment crash | 1,752 | 3 (12 runs per suite) | **0** |
+| deep, re-run 2026-10-07 at recorded revisions | 3 | 574 | 5 (20 runs per suite) | **1** |
+
+**The 2026-10-07 row is the one with a finding, and it is why the others now carry
+revisions.** The deep pass above says "5 suites, 166 tests"; two of those suites are
+`suite-auditor` and `blast-radius`, which have since grown to 130 and 284 tests. The
+sentence read as being about the current suites and was about revisions nobody recorded.
+Re-running the three that are checked out here - blast-radius at `1884140`, assay-drift at
+`9a1089b`, suite-auditor at `805a4bb` - found one flaky test in suite-auditor, which the
+tool first called an ORDER dependence and which turns out to fail 1.5% of the time from
+its own `random.randint`. Both the misattribution and the 1.5% are fixed; the point here
+is that **a clean sweep over a suite a tenth the current size is not evidence about the
+suite today**, and nothing in the old rows let a reader notice that.
 
 The fifteenth suite, devign-leakage, could not be scored this pass: pytest itself crashes
 on import inside that repo's own virtual environment (`pandas.errors` hits a native stack

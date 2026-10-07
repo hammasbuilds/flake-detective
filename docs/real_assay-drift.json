@@ -1,7 +1,7 @@
 {
   "_run": {
-    "repo": "blast-radius",
-    "revision": "1884140",
+    "repo": "assay-drift",
+    "revision": "9a1089b",
     "python": "3.14.7",
     "platform": "win32",
     "runs_per_arm": 5,
@@ -12,10 +12,10 @@
       "clock"
     ],
     "order_seed": 0,
-    "when": "2026-10-07T09:54:13Z"
+    "when": "2026-10-07T09:56:25Z"
   },
-  "total_tests": 284,
-  "seconds": 2399.0,
+  "total_tests": 160,
+  "seconds": 131.3,
   "seed": 0,
   "interrupted": false,
   "arms": [

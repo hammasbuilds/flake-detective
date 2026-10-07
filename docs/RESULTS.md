@@ -138,16 +138,35 @@ Measured before outcomes were read from pytest's own reports (the round-2 audit 
 not re-run since. The new reader only adds observations - errors, and ids the old parser
 dropped - so a re-run could only find more, not fewer.
 
-Five projects with no known flakiness, at 5 runs per arm — 20 runs each, **3,320 test
-executions in 150 seconds**. Every finding here would be a false positive.
+**The revision matters, and three of these rows used not to carry one.** The table below
+used to say "suite-auditor, 24 tests, none" and "blast-radius, 28 tests, none". Those
+repositories now have 130 and 284 tests, so the rows were about revisions nobody had
+recorded while reading as though they were about the current suites. Every investigation
+records its target's git revision now, and the three that could be re-run were, on
+2026-10-07, at 5 runs per arm:
 
-| repo | tests | flaky | broken | seconds |
-|---|---:|---|---|---:|
-| [repo-surgeon](https://github.com/hammasbuilds/repo-surgeon) | 47 | none | none | 46 |
-| [pr-referee](https://github.com/hammasbuilds/pr-referee) | 37 | none | none | 61 |
-| [trace-to-patch](https://github.com/hammasbuilds/trace-to-patch) | 30 | none | none | 12 |
-| [suite-auditor](https://github.com/hammasbuilds/suite-auditor) | 24 | none | none | 14 |
-| [blast-radius](https://github.com/hammasbuilds/blast-radius) | 28 | none | none | 17 |
+| repo | revision | tests | flaky | broken | seconds |
+|---|---|---:|---|---|---:|
+| [blast-radius](https://github.com/hammasbuilds/blast-radius) | `1884140` | 284 | none | none | 2,399 |
+| [assay-drift](https://github.com/hammasbuilds/assay-drift) | `9a1089b` | 160 | none | none | 131 |
+| [suite-auditor](https://github.com/hammasbuilds/suite-auditor) | `805a4bb` | 130 | **1** | none | 827 |
+
+**suite-auditor's one is the useful row.** It came back `ORDER`, 0 of 5 baseline runs
+against 1 of 5 shuffled - and running that assertion 200 times alone shows it fails 1.5%
+of the time from its own use of `random.randint`. It is nondeterminism; the order arm
+happened to be the one that saw it. Both halves were fixed: the guard in suite-auditor
+that should have recognised `random.randint`, and the rule here that let one discordant
+observation name a cause. A re-run at `c113418` or later finds nothing.
+
+The older rows, kept because they cannot be re-run here (these repositories are not
+checked out on this machine) and marked as what they are - measurements of revisions that
+were not recorded:
+
+| repo | revision | tests | flaky | broken | seconds |
+|---|---|---:|---|---|---:|
+| [repo-surgeon](https://github.com/hammasbuilds/repo-surgeon) | not recorded | 47 | none | none | 46 |
+| [pr-referee](https://github.com/hammasbuilds/pr-referee) | not recorded | 37 | none | none | 61 |
+| [trace-to-patch](https://github.com/hammasbuilds/trace-to-patch) | not recorded | 30 | none | none | 12 |
 
 These suites are not trivial to hold still — four of the five shell out to subprocesses,
 install packages, or write to temporary directories, which is exactly where order and clock
