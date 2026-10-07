@@ -78,7 +78,7 @@ default 7 runs per arm, from `flake-detective fixture ./fx` then
 ==========================================================================
 FLAKE DETECTIVE
 ==========================================================================
-10 tests, 4 arms, 24s
+16 tests, 4 arms, 14s
 order seed 0 (--seed 0 repeats these shuffles)
 
   baseline   7 runs         identical conditions, repeated
@@ -86,8 +86,8 @@ order seed 0 (--seed 0 repeats these shuffles)
   hashseed   7 runs         PYTHONHASHSEED varied
   clock      7 runs         the wall clock was frozen at a different date each run
 
-4 flaky tests:
-    1  order
+5 flaky tests:
+    2  order
     1  hash-seed
     1  clock
     1  nondeterminism
@@ -98,8 +98,14 @@ never saw it pass or fail. Setup and teardown errors count as failures.
 --------------------------------------------------------------------------
 test                                                   baseline    order hashseed    clock
 --------------------------------------------------------------------------
-test_order_dependent.py::test_aaa_first_one_wins            0.0      0.4      0.0      0.0
-    ORDER (direction undetermined): failed 0 of 7 baseline runs, 3 of 7 shuffled: its result depends on which tests run before it. The order arm cannot say which way - broken by another test, or relying on one - and nothing else measured it
+...needs_setup.py::test_needs_the_helper_to_have_run        1.0      0.4      1.0      1.0
+    ORDER (direction undetermined): failed 7 of 7 baseline runs, 3 of 7 shuffled: its result depends on which tests run before it. The order arm cannot say which way - broken by another test, or relying on one - and nothing else measured it
+    ! it failed in every baseline run, so clock, hashseed could not show a difference and were not ruled out. Fix the cause
+      above and run again: a second cause would be invisible here.
+    fix: its result depends on which tests run before it: another test either leaks state into it or creates state it relies on. --localise names that test and says which (so does --arms isolation)
+
+test_order_dependent.py::test_aaa_first_one_wins            0.0      0.6      0.0      0.0
+    ORDER (direction undetermined): failed 0 of 7 baseline runs, 4 of 7 shuffled: its result depends on which tests run before it. The order arm cannot say which way - broken by another test, or relying on one - and nothing else measured it
     fix: its result depends on which tests run before it: another test either leaks state into it or creates state it relies on. --localise names that test and says which (so does --arms isolation)
 
 ..._hash_dependent.py::test_first_of_a_set_is_stable        0.0      0.0      0.7      0.0
@@ -110,9 +116,9 @@ test_clock_dependent.py::test_second_is_even                0.0      0.0      0.
     CLOCK: stable under identical repetition; failed 3 of 7 runs when the wall clock was frozen at a different date each run
     fix: it reads the wall clock; freeze or inject the time
 
-test_nondeterministic.py::test_unseeded_random              0.7      1.0      0.6      0.7
+test_nondeterministic.py::test_unseeded_random              0.7      0.6      0.4      0.9
     NONDETERMINISM: flipped with nothing changed: failed 5 of 7 identical runs
-    fix: it flips with nothing changed - unseeded randomness, or a race
+    fix: it flips with nothing changed - unseeded randomness, a race, or state left behind by an earlier run (a cache, a file outside tmp_path, a database row). If it failed once and then never again, look for the state first
 ```
 
 `--seed 0` repeats the shuffles, so the order, hash-seed and clock rows come out the same
@@ -269,30 +275,48 @@ your `addopts` is kept. A pytest-rerunfailures retry counts as the failure it wa
 
 ### On a suite with known answers
 
-The fixture holds **8 flaky tests, one per cause the tool can name, and 7 stable ones** -
+The fixture holds **8 flaky tests, one per cause the tool can name, and 8 stable ones** -
 and a cause whose arm cannot run on the current machine is reported as unscoreable rather
 than counted as a miss, because otherwise this number measures the platform.
 
-`flake-detective bench` at 7 runs per arm, on Windows with the default three arms:
+`flake-detective bench` at 7 runs per arm, on Windows, with every arm (`--arms all`) and
+`pytest-xdist` installed:
 
 | | |
 |---|---:|
-| scoreable causes | **4** of 8 |
-| detected | **4 / 4** |
-| right cause | **4 / 4** |
-| stable tests flagged | **0** of 7 |
-| not scoreable here | `timezone`, `locale`, `parallel`, `needs-other-test` |
+| scoreable causes | **6** of 8 |
+| detected | **6 / 6** |
+| right cause | **6 / 6** |
+| stable tests flagged | **0** of 8 |
+| not scoreable here | `timezone`, `locale` |
 
-With `--arms order,hashseed,clock,isolation` it is **5 / 5** detected and attributed, 0 of
-7 flagged - the isolation arm is what settles the *direction* of an order dependence, so
-`needs-other-test` is only scoreable when it runs. Without it the tool correctly reports
-`ORDER` with the direction undetermined and says so in the advice, which is a refusal to
-guess rather than a wrong answer.
+Three runs on 2026-10-07 gave 6/6, 6/6, 0/8 each time, at `--jobs 4` and at `--jobs 1`.
+With the default three arms it is **4 / 4** detected and attributed, 0 of 8 flagged, and
+the four remaining causes are reported unscoreable: the arms that establish them did not
+run.
 
-`timezone` and `locale` are no-ops on Windows - setting `TZ` there shifts the clock without
-understanding zone names, so an arm built on it would blame "timezone" for something that
-reproduces nowhere a user runs - and `parallel` needs `pytest-xdist` in the target's
-environment. All three report themselves skipped, with the reason.
+**`--arms` was unreachable from the command line until 2026-10-07.** `bench()` had taken
+the argument since the fixture gained a known positive for every arm, but no flag passed
+it, so four of the eight causes could not be scored by anyone using the tool as shipped.
+
+`timezone` and `locale` stay unscoreable on Windows, and that is measured rather than
+assumed: setting `TZ` there shifts the clock without understanding zone names, and
+`LANG`/`LC_ALL` do not reach the interpreter's locale at all. An arm built on either would
+blame a cause that reproduces nowhere a user runs. Both report themselves skipped, with
+the reason.
+
+**`parallel` used to be the third of those, and it was this tool's own fault twice over.**
+It needs `pytest-xdist`, which is now in the dev extra, so the published number is
+reproducible from a plain dev install. And the fixture could not exhibit the cause it
+claimed: a single test asserting that no *other copy of itself* held a marker, when
+`-n` runs each test once, on one worker. There was never a second copy. At `--jobs 1` the
+cause was missed outright; at the default four it was detected and called
+`nondeterminism`, because four independent pytest processes collided on a marker keyed to
+a path rather than to a run - so the test flipped in the *baseline*, and nondeterminism is
+the right reading of a test that does that. The fixture is now a pair: a holder that takes
+the marker for two seconds and asserts nothing, and a contender that only checks it,
+keyed on `PYTEST_XDIST_TESTRUNUID` so the workers of one run contend while independent
+pytest processes do not.
 
 Not every run is 4/4: the nondeterministic test fails half its runs, so with probability
 2/2^7 = 1.6% all seven baseline runs agree, the other arms then disagree with each other,
@@ -303,8 +327,9 @@ on 2026-10-03 did exactly that.
 1,752-test false-positive run further down are the stronger evidence and this is the
 smallest claim here. The stable tests are what make even that mean anything: three are
 written to look flaky (one iterates a set, one mutates module state, one reads the clock),
-one is the other half of the order-dependent pair, and one is the helper the
-needs-another-test fixture depends on.
+one is the other half of the order-dependent pair, one is the helper the
+needs-another-test fixture depends on, and one is the holder the parallel fixture
+contends with.
 
 What a run count buys. `flake-detective bench --sweep` scores one sweep; the
 nondeterministic test is unseeded on purpose, so a single sweep is a draw, not the rate.
@@ -478,7 +503,11 @@ src/flake_detective/
   types.py       the causes, and what distinguishes them
 ```
 
-From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`. That runs the 129 fast tests (plus 2 that skip on Windows; about 30 seconds); `pytest -m slow` runs the 10 end-to-end ones that put real suites through every arm (about a minute), and `pytest -m "slow or not slow"` runs all 141, as CI does.
+From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`. That runs the 145 fast tests (plus 2 that skip on Windows; about 40 seconds); `pytest -m slow` runs the 14 end-to-end ones that put real suites through every arm, and `pytest -m "slow or not slow"` runs all 161, as CI does.
+
+**Run it the way CI does before trusting a pass.** `addopts = "-m 'not slow'"` means a plain `pytest` deselects the end-to-end tests, and one of them sat failing through a commit for exactly that reason: `ALONE_RUNS` became 3, which costs two more probes before the bisection starts, and the probe-budget assertion that should have caught it was never run locally.
+
+`pytest --cov=flake_detective -m "slow or not slow"` reports **87%** of statements. Deselecting the slow tests drops it to 80% and `bench.py` to 34%, which is the clearer reason to run them: the benchmark is nearly all end-to-end.
 
 ## License
 

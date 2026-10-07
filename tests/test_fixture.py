@@ -171,3 +171,97 @@ def test_the_timezone_fixture_passes_in_the_machines_own_zone():
         "the timezone fixture fails in its own zone, which makes it broken rather than "
         "flaky: " + done.stdout.decode("utf-8", "replace")[-400:]
     )
+
+
+def test_the_parallel_fixture_needs_a_second_test_to_contend_with():
+    """One test cannot contend with itself under `-n`, so a pair is the whole point.
+
+    The parallel arm exists for "two tests that each want the same fixed resource and
+    got away with it while they ran one after another". The fixture was a single test
+    asserting no other copy of itself held a marker - and xdist runs each test once, on
+    one worker, so no second copy ever existed. The arm never reproduced it and the
+    cause scored as missed at `--jobs 1`; at the default four it was detected for the
+    wrong reason, because four independent pytest processes collided on the marker and
+    the test flipped in the BASELINE, which reads as nondeterminism.
+    """
+    holder = fixture.FILES["test_parallel_aaa_holder.py"]
+    contender = fixture.FILES["test_parallel_dependent.py"]
+
+    # The holder writes the marker; the contender only reads it. A contender that also
+    # wrote it would be racing itself again.
+    assert 'open(MARKER, "w"' in holder
+    assert 'open(MARKER, "w"' not in contender
+    assert "os.path.exists(MARKER)" in contender
+
+    # Keyed on the pytest run, so the workers of one `-n` run contend and independent
+    # pytest processes do not. Without this the benchmark's own concurrency poisoned
+    # the baseline.
+    assert "PYTEST_XDIST_TESTRUNUID" in holder
+
+    # Collected first, so it is handed to a worker before the contender runs.
+    assert "test_parallel_aaa_holder.py" < "test_parallel_dependent.py"
+
+    # And it must never be reported flaky itself: it asserts nothing.
+    assert fixture.TRUTH["test_parallel_aaa_holder.py::test_aaa_holds_the_marker"] is None
+    assert "assert" not in holder.split('"""', 2)[-1]
+
+
+def test_the_holder_does_nothing_when_the_suite_is_not_parallel():
+    """Serially there is nobody to contend with, and a leftover marker would be worse.
+
+    If the holder wrote the marker in a serial run, the contender would trip over it and
+    the cause would read as an ORDER dependence - the wrong answer, from a fixture that
+    created the wrong hazard.
+    """
+    holder = fixture.FILES["test_parallel_aaa_holder.py"]
+    body = holder.split("def test_aaa_holds_the_marker():", 1)[1]
+    guard = body.index("return")
+    write = body.index('open(MARKER, "w"')
+    assert guard < write, "the holder must return before writing when xdist is absent"
+    assert 'os.environ.get("PYTEST_XDIST_TESTRUNUID")' in body[:guard]
+
+
+def test_the_readme_counts_match_the_fixture():
+    """The published table has to be the fixture, not a memory of it.
+
+    Adding the parallel holder moved the stable count from 7 to 8, and the README quotes
+    it twice. A count in prose that nothing checks is a count that drifts: this file's own
+    history has an arm whose rates were undefined while the README offered it.
+    """
+    import pathlib
+    import re
+
+    readme = (pathlib.Path(__file__).resolve().parent.parent / "README.md").read_text(
+        encoding="utf-8"
+    )
+    flaky = [k for k, v in fixture.TRUTH.items() if v]
+    stable = [k for k, v in fixture.TRUTH.items() if v is None]
+
+    # Parenthesised on purpose. Written as `assert f"..."` with the second half on the
+    # next line, the assert ends at the newline - it tests that a non-empty string is
+    # truthy, and the remainder is a discarded expression. That version passed while
+    # saying nothing, which is the one failure mode this whole file exists to catch.
+    sentence = (
+        f"**{len(flaky)} flaky tests, one per cause the tool can name, and "
+        f"{len(stable)} stable ones**"
+    )
+    assert sentence in readme, (
+        f"the README does not say {len(flaky)} flaky and {len(stable)} stable"
+    )
+
+    # Scoreable here = every cause whose arm can run on this platform.
+    unrunnable = fixture.ENVIRONMENT_ONLY
+    scoreable = {v for v in fixture.TRUTH.values() if v} - unrunnable
+    row = re.search(r"\| scoreable causes \| \*\*(\d+)\*\* of (\d+) \|", readme)
+    assert row, "the scoreable-causes row is gone from the README"
+    assert int(row.group(1)) == len(scoreable), (
+        f"README says {row.group(1)} scoreable causes; the fixture has {len(scoreable)} "
+        f"once {sorted(unrunnable)} are excluded"
+    )
+    assert int(row.group(2)) == len({v for v in fixture.TRUTH.values() if v})
+
+    flagged = re.search(r"\| stable tests flagged \| \*\*0\*\* of (\d+) \|", readme)
+    assert flagged, "the stable-tests-flagged row is gone from the README"
+    assert int(flagged.group(1)) == len(stable), (
+        f"README says 0 of {flagged.group(1)}; the fixture has {len(stable)} stable tests"
+    )

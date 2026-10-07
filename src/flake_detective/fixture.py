@@ -124,25 +124,57 @@ def test_uppercasing_i_is_ascii():
 '''
 
 PARALLEL_DEPENDENT = '''\
-"""Fails when another copy of itself runs at the same time. Cause: PARALLEL."""
+"""Fails when ANOTHER test holds a resource it wants. Cause: PARALLEL.
+
+The parallel arm exists for "two tests that each want the same fixed resource - a port,
+a temp path, a database name - and got away with it while they ran one after another".
+This fixture used to be a single test contending with *itself*, which under `-n` cannot
+happen: xdist runs each test once, on one worker, so there was never a second copy. The
+arm therefore never reproduced it, and the cause scored as missed.
+
+Its partner, test_parallel_aaa_holder.py, holds the marker for a couple of seconds and
+asserts nothing, so it can never itself be reported flaky. Collected first, it is handed
+to a worker immediately; this test then runs on another worker while the marker is held.
+Run serially the holder has already released it, and this passes.
+"""
 
 import os
-import time
 
-# Beside this file, which the fixture writes into a fresh directory for every run. In the
-# shared temp directory a marker left behind by a crashed run would make this test fail
-# for ever after, which is a broken fixture rather than a flaky test.
 MARKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parallel.lock")
 
 
 def test_exclusive_use_of_a_shared_file():
-    # Not atomic on purpose: two workers both see it missing, both create it, and the
-    # second assertion fails for whichever loses. Serially it always passes.
-    assert not os.path.exists(MARKER), "another worker holds the marker"
+    assert not os.path.exists(MARKER), "another test is holding the marker"
+'''
+
+PARALLEL_HOLDER = '''\
+"""Holds a shared marker briefly. Asserts nothing, so it is never flaky itself.
+
+The marker is keyed on the pytest RUN, not on this file alone. `PYTEST_XDIST_TESTRUNUID`
+is the same for every worker of one `-n` run and absent without xdist, so the workers of
+a single run contend while independent pytest processes do not. That distinction is the
+whole fixture: the benchmark runs up to four pytest processes at once, and with a
+run-independent path those processes collided too - the test flipped in the BASELINE and
+was reported as nondeterminism, a correct reading of a fixture that was lying.
+"""
+
+import os
+import time
+
+RUN = os.environ.get("PYTEST_XDIST_TESTRUNUID") or str(os.getpid())
+MARKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parallel.lock")
+
+
+def test_aaa_holds_the_marker():
+    # Written only when this run uses workers: serially there is nobody to contend with,
+    # and leaving a marker behind for the next test to trip over would make this an order
+    # dependence instead of a parallel one.
+    if not os.environ.get("PYTEST_XDIST_TESTRUNUID"):
+        return
     with open(MARKER, "w", encoding="utf-8") as handle:
-        handle.write(str(os.getpid()))
+        handle.write(RUN)
     try:
-        time.sleep(0.05)
+        time.sleep(2.0)
     finally:
         try:
             os.remove(MARKER)
@@ -230,6 +262,7 @@ FILES = {
     # which platform.
     "test_timezone_dependent.py": TIMEZONE_DEPENDENT,
     "test_locale_dependent.py": LOCALE_DEPENDENT,
+    "test_parallel_aaa_holder.py": PARALLEL_HOLDER,
     "test_parallel_dependent.py": PARALLEL_DEPENDENT,
     "test_needs_setup_helper.py": NEEDS_ANOTHER_TEST_HELPER,
     "test_needs_setup.py": NEEDS_ANOTHER_TEST,
@@ -260,6 +293,9 @@ TRUTH = {
     "test_timezone_dependent.py::test_local_offset_is_the_one_we_developed_in": "timezone",
     "test_locale_dependent.py::test_uppercasing_i_is_ascii": "locale",
     "test_parallel_dependent.py::test_exclusive_use_of_a_shared_file": "parallel",
+    # Holds the marker so the test above has something to contend with. It asserts
+    # nothing at all, so reporting it as flaky would be a false positive.
+    "test_parallel_aaa_holder.py::test_aaa_holds_the_marker": None,
     # Fails alone, passes after its helper: the needs-another-test direction, which is the
     # opposite remedy to the order fixture and was never scored.
     "test_needs_setup.py::test_needs_the_helper_to_have_run": "needs-other-test",

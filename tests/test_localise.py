@@ -13,11 +13,11 @@ from pathlib import Path
 import pytest
 
 
-def _suite(root: Path, extra: str = "") -> Path:
+def _suite(root: Path, extra: str = "", innocents: int = 6) -> Path:
     """A real little suite: one culprit, one victim, and several innocents."""
     tests = root / "tests"
     tests.mkdir(parents=True, exist_ok=True)
-    for i in range(6):
+    for i in range(innocents):
         (tests / f"test_innocent_{i}.py").write_text(
             f"def test_innocent_{i}():\n    assert {i} == {i}\n", encoding="utf-8"
         )
@@ -48,19 +48,44 @@ def test_the_culprit_behind_an_order_dependence_is_named(tmp_path):
     """
     from flake_detective.localise import localise
 
-    repo = _suite(tmp_path)
-    tests = [f"tests/test_innocent_{i}.py::test_innocent_{i}" for i in range(6)]
+    # 30 innocents, so bisection and a linear scan are far apart. At six they were
+    # not: 7 candidates cost at most 10 probes bisecting and 11 scanning, and an
+    # assertion that cannot tell those apart is not measuring bisection. The old bound
+    # of 9 was stale for a second reason - `ALONE_RUNS` became 3, which is 2 more probes
+    # before the search starts - and it went unnoticed because this test is marked slow
+    # and the default `addopts` deselects it.
+    innocents = 30
+    repo = _suite(tmp_path, innocents=innocents)
+    tests = [
+        f"tests/test_innocent_{i}.py::test_innocent_{i}" for i in range(innocents)
+    ]
     tests += [
         "tests/test_culprit.py::test_culprit_leaves_state",
         "tests/test_victim.py::test_victim",
     ]
 
-    result = localise(repo, "tests/test_victim.py::test_victim", tests, timeout=300)
+    result = localise(repo, "tests/test_victim.py::test_victim", tests, timeout=900)
 
     assert result.outcome == "single", result.describe()
     assert result.culprits == ["tests/test_culprit.py::test_culprit_leaves_state"]
-    # log2(7) halvings plus the two checks at the start, not a scan of all seven.
-    assert result.probes <= 9, f"bisection took {result.probes} runs"
+
+    # The real accounting: ALONE_RUNS probes to fix the direction, one with every
+    # candidate in front, then each halving costs one probe or two - the second half is
+    # only tried when the first does not reproduce.
+    import math
+
+    from flake_detective.localise import ALONE_RUNS
+
+    candidates = innocents + 1
+    budget = ALONE_RUNS + 1 + 2 * math.ceil(math.log2(candidates))
+    assert result.probes <= budget, (
+        f"bisection took {result.probes} runs, budget {budget} "
+        f"({ALONE_RUNS} alone + 1 whole-suite + 2 per halving of {candidates})"
+    )
+    # And strictly cheaper than trying them one at a time, which is the whole claim.
+    assert result.probes < candidates, (
+        f"{result.probes} probes for {candidates} candidates is no better than a scan"
+    )
 
 
 def test_a_test_that_fails_alone_whatever_runs_first_names_nothing(tmp_path):

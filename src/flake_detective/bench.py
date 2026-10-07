@@ -147,6 +147,7 @@ def sweep(
     progress=None,
     python: str = "",
     jobs: int = 1,
+    arms: tuple[str, ...] | None = None,
 ) -> dict:
     """The same fixture at several run counts.
 
@@ -160,7 +161,7 @@ def sweep(
     rows = []
     for n in counts:
         say(f"sweep: {n} runs per arm")
-        r = run(runs=n, timeout=timeout, python=python, jobs=jobs, progress=say)
+        r = run(runs=n, timeout=timeout, python=python, jobs=jobs, progress=say, arms=arms)
         if "error" in r:
             return {"sweep": rows, "error": r["error"]}
         rows.append(

@@ -289,6 +289,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="score at 1,2,3,5,7,11 runs per arm instead of one count",
     )
+    # bench() has taken `arms` since the fixture gained a known positive for every
+    # arm, but nothing on the command line could pass it - so four of the eight causes
+    # were unreachable from the CLI and the only score a user could produce was the
+    # three-arm one. `needs-other-test` in particular is settled only by the isolation
+    # arm, and `parallel` only needs pytest-xdist in the target's environment.
+    b.add_argument(
+        "--arms",
+        type=_arms,
+        metavar="LIST",
+        help="arms to score, comma-separated, or 'all' (default: the same three "
+        f"`investigate` defaults to - {', '.join(ARMS)}). Causes whose arm cannot run "
+        "here are excluded from both rates rather than counted as misses",
+    )
 
     f = sub.add_parser(
         "fixture",
@@ -335,11 +348,18 @@ def _main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "bench":
         if a.sweep:
-            res = bench_mod.sweep(timeout=a.timeout, progress=say, python=python, jobs=a.jobs)
+            res = bench_mod.sweep(
+                timeout=a.timeout, progress=say, python=python, jobs=a.jobs, arms=a.arms
+            )
             out = bench_mod.sweep_text(res)
         else:
             res = bench_mod.run(
-                runs=a.runs, timeout=a.timeout, progress=say, python=python, jobs=a.jobs
+                runs=a.runs,
+                timeout=a.timeout,
+                progress=say,
+                python=python,
+                jobs=a.jobs,
+                arms=a.arms,
             )
             out = bench_mod.text(res)
         if say:
