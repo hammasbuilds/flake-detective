@@ -7,3 +7,10 @@ dist/
 build/
 .pytest_cache/
 .ruff_cache/
+
+# Coverage artefacts. A 52 KB SQLite file holding absolute local paths; it was
+# committed into four of these repositories the day coverage was first measured.
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
