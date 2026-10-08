@@ -221,6 +221,10 @@ def test_the_holder_does_nothing_when_the_suite_is_not_parallel():
     assert 'os.environ.get("PYTEST_XDIST_TESTRUNUID")' in body[:guard]
 
 
+@pytest.mark.skipif(
+    not (Path(__file__).resolve().parent.parent / "README.md").exists(),
+    reason="README.md is not shipped with the tests",
+)
 def test_the_readme_counts_match_the_fixture():
     """The published table has to be the fixture, not a memory of it.
 

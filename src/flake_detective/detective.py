@@ -62,6 +62,7 @@ def _provenance(repo: Path, opts: Options, arms: tuple[str, ...]) -> dict:
         "when": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
     }
 
+
 # Available but not on by default. Each costs a full set of runs, and the three
 # above catch the causes that turn up most; these three catch the ones that turn up
 # worst. Opt in with --arms order,hashseed,clock,timezone,locale,parallel.

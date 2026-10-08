@@ -56,9 +56,7 @@ def test_the_culprit_behind_an_order_dependence_is_named(tmp_path):
     # and the default `addopts` deselects it.
     innocents = 30
     repo = _suite(tmp_path, innocents=innocents)
-    tests = [
-        f"tests/test_innocent_{i}.py::test_innocent_{i}" for i in range(innocents)
-    ]
+    tests = [f"tests/test_innocent_{i}.py::test_innocent_{i}" for i in range(innocents)]
     tests += [
         "tests/test_culprit.py::test_culprit_leaves_state",
         "tests/test_victim.py::test_victim",

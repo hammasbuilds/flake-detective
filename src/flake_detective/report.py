@@ -177,9 +177,7 @@ def text(inv: Investigation) -> str:
                     + ", ".join(f.masked_arms)
                     + " could not show a difference and were not ruled out. Fix the cause"
                 )
-                out.append(
-                    "      above and run again: a second cause would be invisible here."
-                )
+                out.append("      above and run again: a second cause would be invisible here.")
             out.append(f"    fix: {f.fix}")
             out.append("")
 

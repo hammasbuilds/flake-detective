@@ -243,9 +243,7 @@ def _masked_by(arms: list[Arm], baseline: Arm | None, test_id: str) -> list[str]
     if baseline.rate(test_id) != 1.0:
         return []
     return sorted(
-        a.name
-        for a in arms
-        if a.name != "baseline" and a.seen(test_id) and a.rate(test_id) == 1.0
+        a.name for a in arms if a.name != "baseline" and a.seen(test_id) and a.rate(test_id) == 1.0
     )
 
 
@@ -332,9 +330,7 @@ def classify(arms: list[Arm], tests: list[str]) -> Investigation:
             # differently somewhere, saying nothing is wrong. It is flaky and the cause
             # is not established, which is a different statement from "not flaky", and
             # the one that used to be given as ORDER.
-            nearly = [
-                a for a in others if _any_rate_difference(a, baseline, test_id)
-            ]
+            nearly = [a for a in others if _any_rate_difference(a, baseline, test_id)]
             if nearly:
                 out.flakes.append(
                     Flake(
@@ -344,8 +340,7 @@ def classify(arms: list[Arm], tests: list[str]) -> Investigation:
                         + _count(baseline, test_id)
                         + " baseline runs and "
                         + ", ".join(
-                            f"{_count(a, test_id)} {_LABEL.get(a.name, a.name)}"
-                            for a in nearly
+                            f"{_count(a, test_id)} {_LABEL.get(a.name, a.name)}" for a in nearly
                         )
                         + f": a difference of fewer than {MIN_DISCORDANT} observations, "
                         "which one underlying failure rate explains. More runs would "

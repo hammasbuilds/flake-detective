@@ -302,6 +302,10 @@ def test_the_seed_is_printed_and_can_be_given(tmp_path, capsys):
     assert "order seed " in capsys.readouterr().out
 
 
+@pytest.mark.skipif(
+    not (ROOT / "pyproject.toml").exists(),
+    reason="pyproject.toml is not shipped with the tests",
+)
 def test_the_python_classifiers_are_the_versions_ci_tests() -> None:
     """A version classifier is a claim pip acts on, so it has to be tested.
 

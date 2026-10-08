@@ -166,9 +166,7 @@ class TestASaturatedBaselineHidesOtherCauses:
     def test_a_masked_arm_is_named_when_the_baseline_is_saturated(self):
         from flake_detective.classify import classify
 
-        arms, test = self._arms(
-            {"baseline": 1.0, "order": 0.4, "hashseed": 1.0, "clock": 1.0}
-        )
+        arms, test = self._arms({"baseline": 1.0, "order": 0.4, "hashseed": 1.0, "clock": 1.0})
         inv = classify(arms, [test])
         assert len(inv.flakes) == 1
         found = inv.flakes[0]
@@ -184,9 +182,7 @@ class TestASaturatedBaselineHidesOtherCauses:
         """The ordinary case: a baseline of 0.0 leaves every arm free to rise above it."""
         from flake_detective.classify import classify
 
-        arms, test = self._arms(
-            {"baseline": 0.0, "order": 0.4, "hashseed": 0.0, "clock": 0.0}
-        )
+        arms, test = self._arms({"baseline": 0.0, "order": 0.4, "hashseed": 0.0, "clock": 0.0})
         inv = classify(arms, [test])
         assert len(inv.flakes) == 1
         assert inv.flakes[0].masked_arms == []
@@ -207,9 +203,7 @@ class TestASaturatedBaselineHidesOtherCauses:
         from flake_detective.classify import classify
         from flake_detective.report import text
 
-        arms, test = self._arms(
-            {"baseline": 1.0, "order": 0.4, "hashseed": 1.0, "clock": 1.0}
-        )
+        arms, test = self._arms({"baseline": 1.0, "order": 0.4, "hashseed": 1.0, "clock": 1.0})
         rendered = text(classify(arms, [test]))
         assert "were not ruled out" in rendered
         assert "clock, hashseed" in rendered
