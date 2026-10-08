@@ -46,7 +46,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install pytest ruff
+      # Pinned like ci.yml: an unpinned ruff fails the release gate the day the
+      # formatter changes its mind.
+      - run: pip install "pytest>=8" "ruff>=0.16,<0.17"
       - run: ruff check src tests scripts demo.py
       - run: ruff format --check src tests scripts demo.py
       - run: pip install -e .
@@ -60,7 +62,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install build twine
+      # readme_renderer[md] is what lets `twine check` render Markdown. Without it
+      # readme_renderer.markdown.render() returns None, twine reports PASSED, and
+      # the gate passes a README it never parsed.
+      - run: pip install build twine "readme_renderer[md]"
       - run: python -m build
 
       # The version in pyproject.toml must match the tag, or you publish 0.1.0
@@ -75,7 +80,7 @@ jobs:
 
       # Catches a README that will not render on PyPI, which cannot be fixed
       # after upload without burning a version number.
-      - run: twine check dist/*
+      - run: twine check --strict dist/*
 
       - name: py.typed must be in the wheel
         run: |
