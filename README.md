@@ -1,29 +1,33 @@
-<h1 align="center">flake-detective</h1>
-<p align="center"><i>A flaky test is not a problem to rerun. It is a dependency nobody declared.</i></p>
+# flake-detective
 
-<p align="center">
-  <a href="https://github.com/hammasbuilds/flake-detective/actions/workflows/ci.yml"><img src="https://github.com/hammasbuilds/flake-detective/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python">
-  <img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen" alt="zero dependencies">
-  <a href="https://github.com/hammasbuilds/flake-detective/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
-</p>
-
-flake-detective runs your pytest suite many times, changing **one thing per batch of
+We built flake-detective to find flaky tests and say what they depend on. It runs your pytest suite many times, changing **one thing per batch of
 runs** — the test order, `PYTHONHASHSEED`, the frozen wall-clock date — and reports
 which change makes each flaky test flip. So instead of "`test_x` is flaky, rerun it"
 you get "`test_x` passes on its own and fails after `test_y`" (or "fails on its own and
 passes only after `test_y`", which needs the opposite fix), with the failure rate under
 every condition printed beside the verdict.
 
-`pytest-rerunfailures` makes a flaky test go away. This tells you why it was flaky.
+`pytest-rerunfailures` makes a flaky test go away. This tells you why it was flaky. It
+is for maintainers and CI owners of Python test suites.
+
+## What it does
+
+- Runs your suite in arms that each vary one condition - test order, `PYTHONHASHSEED`, a
+  frozen wall-clock date, and optionally timezone, locale, `pytest-xdist` parallelism or
+  each test alone - next to a baseline of identical repeats.
+- Names a cause only when an arm's failure rate differs from the baseline by more than
+  the baseline can explain; a test that flips with nothing changed is nondeterminism, and
+  two arms that disagree give `UNKNOWN` rather than a guess.
+- `--localise` bisects each order dependence to the other test involved and says which
+  way round it is.
+- `bench` scores the tool on a built-in suite with known answers; `--json` and
+  `--fail-on-flake` make it a CI step.
 
 ## Install
 
 ```bash
 pip install git+https://github.com/hammasbuilds/flake-detective
 ```
-
-PyPI release coming: `pip install flake-detective` will work once it is published.
 
 Python 3.11+, no runtime dependencies. **It needs pytest, but not in its own
 environment:** it runs your suite as a subprocess with the pytest installed wherever
@@ -68,7 +72,7 @@ flake-detective bench
 flake-detective fixture ./flake-fixture
 ```
 
-## What it prints
+## Sample input / output
 
 The built-in benchmark's suite — written to be flaky in four specified ways — at the
 default 7 runs per arm, from `flake-detective fixture ./fx` then
@@ -271,16 +275,15 @@ a run early or reorder it by history (`-x`, `--maxfail`, `--sw`, `--lf`, `--ff`,
 and xdist's `-n` outside the parallel arm) are switched off for these runs; the rest of
 your `addopts` is kept. A pytest-rerunfailures retry counts as the failure it was.
 
-## How well it works
+## Results
 
-### On a suite with known answers
+Full tables and every dated run: [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/blob/main/docs/RESULTS.md).
 
-The fixture holds **8 flaky tests, one per cause the tool can name, and 8 stable ones** -
-and a cause whose arm cannot run on the current machine is reported as unscoreable rather
-than counted as a miss, because otherwise this number measures the platform.
-
-`flake-detective bench` at 7 runs per arm, on Windows, with every arm (`--arms all`) and
-`pytest-xdist` installed:
+**On the built-in suite with known answers.** The fixture holds
+**8 flaky tests, one per cause the tool can name, and 8 stable ones**
+(three of them written to look flaky).
+`flake-detective bench --arms all` at 7 runs per arm, on Windows, with `pytest-xdist`
+installed, three runs on 2026-10-07:
 
 | | |
 |---|---:|
@@ -290,51 +293,9 @@ than counted as a miss, because otherwise this number measures the platform.
 | stable tests flagged | **0** of 8 |
 | not scoreable here | `timezone`, `locale` |
 
-Three runs on 2026-10-07 gave 6/6, 6/6, 0/8 each time, at `--jobs 4` and at `--jobs 1`.
-With the default three arms it is **4 / 4** detected and attributed, 0 of 8 flagged, and
-the four remaining causes are reported unscoreable: the arms that establish them did not
-run.
+With the default three arms it is 4 of 4 detected and attributed.
 
-**`--arms` was unreachable from the command line until 2026-10-07.** `bench()` had taken
-the argument since the fixture gained a known positive for every arm, but no flag passed
-it, so four of the eight causes could not be scored by anyone using the tool as shipped.
-
-`timezone` and `locale` stay unscoreable on Windows, and that is measured rather than
-assumed: setting `TZ` there shifts the clock without understanding zone names, and
-`LANG`/`LC_ALL` do not reach the interpreter's locale at all. An arm built on either would
-blame a cause that reproduces nowhere a user runs. Both report themselves skipped, with
-the reason.
-
-**`parallel` used to be the third of those, and it was this tool's own fault twice over.**
-It needs `pytest-xdist`, which is now in the dev extra, so the published number is
-reproducible from a plain dev install. And the fixture could not exhibit the cause it
-claimed: a single test asserting that no *other copy of itself* held a marker, when
-`-n` runs each test once, on one worker. There was never a second copy. At `--jobs 1` the
-cause was missed outright; at the default four it was detected and called
-`nondeterminism`, because four independent pytest processes collided on a marker keyed to
-a path rather than to a run - so the test flipped in the *baseline*, and nondeterminism is
-the right reading of a test that does that. The fixture is now a pair: a holder that takes
-the marker for two seconds and asserts nothing, and a contender that only checks it,
-keyed on `PYTEST_XDIST_TESTRUNUID` so the workers of one run contend while independent
-pytest processes do not.
-
-Not every run is 4/4: the nondeterministic test fails half its runs, so with probability
-2/2^7 = 1.6% all seven baseline runs agree, the other arms then disagree with each other,
-and it comes back `UNKNOWN` - attribution 3/4, never a wrong cause. One of six `bench` runs
-on 2026-10-03 did exactly that.
-
-**One test is 25 points of this detection rate**, which is why the 48-plant study and the
-1,752-test false-positive run further down are the stronger evidence and this is the
-smallest claim here. The stable tests are what make even that mean anything: three are
-written to look flaky (one iterates a set, one mutates module state, one reads the clock),
-one is the other half of the order-dependent pair, one is the helper the
-needs-another-test fixture depends on, and one is the holder the parallel fixture
-contends with.
-
-What a run count buys. `flake-detective bench --sweep` scores one sweep; the
-nondeterministic test is unseeded on purpose, so a single sweep is a draw, not the rate.
-Eight sweeps on 2026-10-07 (`--sweep --json`), counting how many found all four flaky
-tests and how many also named all four causes right:
+What a run count buys, eight sweeps on 2026-10-07 (`bench --sweep --json`):
 
 | runs/arm | all 4 detected | and all 4 causes right | stable tests flagged | secs per point |
 |---:|---:|---:|---:|---:|
@@ -345,173 +306,54 @@ tests and how many also named all four causes right:
 | 7 | 8 of 8 | 8 of 8 | 0 | 7-8 |
 | 11 | 8 of 8 | 8 of 8 | 0 | 10-13 |
 
-**Detection and attribution now separate cleanly, and that is a change.** The earlier
-table read 0 of 8 detected at one run and 7 of 8 *attributed* at two, which was the same
-rule answering two different questions. An arm is implicated now only when its failure
-count is one the baseline's rate cannot explain - a difference of at least two
-observations - because one cannot distinguish a cause from a low intrinsic failure rate
-the baseline did not happen to see. At two runs per arm, two discordant observations is
-the most that can exist, so almost nothing clears the bar and attribution is 0 of 8: the
-honest answer for two runs, where the old rule gave 7 of 8 by reading a single flip as
-proof. Detection rises in exchange, because a test that behaved differently is now
-*reported* with no cause rather than dropped.
-
-That change came from running this tool over `suite-auditor`, where it reported a test as
-an ORDER dependence on 0 of 5 baseline runs against 1 of 5 shuffled. Running that
-assertion 200 times alone, in one process, it fails **1.5% of the time**: it is
-nondeterminism, the order arm simply saw it, and sending somebody to look for a leaking
-test is the most expensive wrong answer this tool can give. (The 1.5% had a cause of its
-own, in suite-auditor's nondeterminism guard, which is fixed there.)
-
-Every remaining miss is the nondeterministic test coming back `UNKNOWN`: it fails about
-half its runs, so sometimes every baseline run agrees, the control shows no flip, and the
-other arms then disagree with each other. Nothing in those sweeps was given a wrong
-cause, and no stable test was ever flagged.
-
-The zero attribution at one run is deliberate for a second reason. One run per arm finds
-instability and **refuses to name a cause**, because a baseline that runs once cannot
-flip, and a control that cannot flip cannot rule out nondeterminism.
-
-### On real suites
-
-The wide pass below was re-measured on **2026-09-29** against the current suites (several
-had grown substantially since the last pass, some by 2-10x — an active portfolio, not a
-fixed benchmark). The deep pass and the planted-flake study further down were both
-measured before outcomes were read from pytest's own reports (the audit fixes listed
-further down); that change can only add observations, never hide one, so re-measuring
-could only raise a false-positive count that has stayed at zero across two different
-outcome-reading implementations now — but the deep pass and the plant study themselves
-have not been re-run since, and are dated below.
-
-Two separate passes over real, deterministic suites, at different depths. Both are
-author-run: the suites are the author's own repositories, so these rows cannot be
-re-run from this repository alone (the third-party study below can):
-
-| pass | suites | tests | runs per arm | flagged as flaky |
-|---|---:|---:|---:|---:|
-| deep (measured before the outcome-reading refactor, not re-run) | 5 | 166 | 5 (20 runs per suite) | **0** |
-| wide (re-measured 2026-09-29) | 14 scored + 1 environment crash | 1,752 | 3 (12 runs per suite) | **0** |
-| deep, re-run 2026-10-07 at recorded revisions | 3 | 574 | 5 (20 runs per suite) | **1** |
-
-**The 2026-10-07 row is the one with a finding, and it is why the others now carry
-revisions.** The deep pass above says "5 suites, 166 tests"; two of those suites are
-`suite-auditor` and `blast-radius`, which have since grown to 130 and 284 tests. The
-sentence read as being about the current suites and was about revisions nobody recorded.
-Re-running the three that are checked out here - blast-radius at `1884140`, assay-drift at
-`9a1089b`, suite-auditor at `805a4bb` - found one flaky test in suite-auditor, which the
-tool first called an ORDER dependence and which turns out to fail 1.5% of the time from
-its own `random.randint`. Both the misattribution and the 1.5% are fixed; the point here
-is that **a clean sweep over a suite a tenth the current size is not evidence about the
-suite today**, and nothing in the old rows let a reader notice that.
-
-The fifteenth suite, devign-leakage, could not be scored this pass: pytest itself crashes
-on import inside that repo's own virtual environment (`pandas.errors` hits a native stack
-overflow, exit code 0xC0000FD unrelated to flake-detective) — reported honestly as "nothing
-was examined," not folded into the clean total.
-
-The fourteen scored, with the suite sizes they had **when they were scored on
-2026-09-29** - three have grown since, and restating today's numbers would
-misdescribe what was actually examined: urdu-nlp-toolkit (576 tests), blast-radius (237),
-clcuv-surveillance (203), suite-auditor (108), credit-risk-engine (108), primer-designer
-(94), demand-forecast-platform (77), insurance-mlops (111), repo-surgeon (47),
-docstring-drift (42), perf-hunter (42), pr-referee (37), model-serving-platform (40),
-trace-to-patch (30). All share an author, so a clean sweep across them is weaker evidence
-than unrelated projects would be.
-
-A detector that cries wolf gets uninstalled in a week, so this is the number to check
-before the detection rate. On its own it only shows the tool is quiet on quiet code.
-
-### Planted in third-party suites (re-runnable)
-
-The two studies below ran against the author's own repositories, so nobody else can
-re-run them. This one can: `sh scripts/reproduce_third_party.sh` clones
-[toolz](https://github.com/pytoolz/toolz) at `451af60` and
-[sqlparse](https://github.com/andialbrecht/sqlparse) at `60cdc64`, plants one flake of
-each cause into each, and investigates at the defaults (7 runs per arm, `--seed 0`).
-Two runs on a 16-core Windows machine, one while it was busy with other jobs and one
-while it was quiet:
+**Planted in third-party suites** (re-runnable: `sh scripts/reproduce_third_party.sh`
+clones toolz at `451af60` and sqlparse at `60cdc64` and plants one flake of each cause):
 
 | suite | tests | order | hash-seed | clock | nondeterminism | other tests flagged |
 |---|---:|:---:|:---:|:---:|:---:|---|
-| toolz, 2026-10-03 (busy) | 194 | right | right | right | right | none |
-| sqlparse, 2026-10-03 (busy) | 510 | right | right | right | `UNKNOWN` | 2 distinct, in 4 of 4 runs |
-| toolz, 2026-10-04 (quiet, 5 min in all) | 194 | right | right | right | right | none |
+| toolz, 2026-10-03 (busy machine) | 194 | right | right | right | right | none |
+| sqlparse, 2026-10-03 (busy machine) | 510 | right | right | right | `UNKNOWN` | 2, real wall-clock flakes |
+| toolz, 2026-10-04 (quiet) | 194 | right | right | right | right | none |
 | sqlparse, 2026-10-04 | 510 | right | right | right | right | none |
 
-16 of 16 plants detected, 15 of 16 with the right cause. The miss is the same one the
-benchmark can show (below): a test that fails half the time also passes all 7 baseline
-runs, or fails all 7, with probability 2/2^7 = 1.6%, and then the other arms disagree
-and the answer is `UNKNOWN` rather than a guess.
+16 of 16 plants detected, 15 of 16 with the right cause. The two sqlparse tests flagged on
+the busy day assert that a parse finishes in under one second.
 
-The two sqlparse tests flagged on the busy day are real wall-clock flakes, not false
-positives: `test_dos_prevention.py::test_nested_paren_within_cap_under_1s` and
-`..._case_within_cap_under_1s` assert that a parse finishes in under one second, which a
-loaded machine does not always manage - and on the quiet day it did, so they were not
-flagged.
+**Planted in twelve of our own suites** (author-run, `scripts/inject_and_score.py`): 48
+plants, **47 detected**, **46 with the right cause**, **0** findings on tests that were
+not planted.
 
-### Planted in the author's other suites (author-run, dated)
+**False positives on real suites** (author-run):
 
-The fixture's author and the classifier's author are the same person, so the fixture
-cannot fairly measure detection. So a flake of known cause was planted into twelve real
-suites instead — among thirty to ninety real tests each, with their own fixtures and
-conftest — using [`scripts/inject_and_score.py`](https://github.com/hammasbuilds/flake-detective/blob/main/scripts/inject_and_score.py). Measured before the outcome-reading
-refactor above; not re-run since (unlike the wide pass, replaying a plant against a
-suite that has since gained or lost tests is not a like-for-like re-check, so this one
-is left dated rather than re-run against drifted targets):
+| pass | suites | tests | runs per arm | flagged as flaky |
+|---|---:|---:|---:|---:|
+| deep | 5 | 166 | 5 | **0** |
+| wide, 2026-09-29 | 14 | 1,752 | 3 | **0** |
+| deep, 2026-10-07, at recorded revisions | 3 | 574 | 5 | **1** (a real 1.5% nondeterministic test in suite-auditor, since fixed there) |
 
-| | |
-|---|---:|
-| plants scored | **48** across 12 repositories |
-| detected | **47 / 48 — 98%** |
-| cause named correctly | **46 / 48 — 96%** |
-| findings that were **not** the planted test | **0** |
+## Good to know
 
-The order miss was the run count: a two-test order dependence is only exposed by
-shuffles that put the culprit first, so five shuffles miss it 3.1% of the time — which is
-why the default is now seven. The nondeterminism miss came back as `UNKNOWN`, not wrong.
-That run used 5 runs per arm, before the default changed.
+- "No flaky tests found" means nothing was seen in that many runs; the report prints what
+  that many runs can miss.
+- A test that fails in every baseline run cannot show a difference under any arm, so
+  those arms are named as not ruled out (`masked_arms`, `second_cause_possible`): fix the
+  first cause and run again.
+- The `timezone` and `locale` arms skip themselves on Windows, where `TZ` and `LC_ALL` do
+  not reach the interpreter the way they do on Linux and macOS.
+- The clock freeze makes durations measured with `time.time()` read as zero; use
+  `--no-freeze-clock` for a suite that breaks under it. A module that imported `datetime`
+  before the plugin loaded keeps its own reference.
+- Only pytest (unittest suites as far as pytest can collect them). Filesystem ordering is
+  not varied.
 
-Full details: [docs/RESULTS.md](https://github.com/hammasbuilds/flake-detective/blob/main/docs/RESULTS.md).
+## Tech stack
 
-## Scope
-
-- **It does not prove a suite is clean.** "No flaky tests found" means nothing was seen
-  in this many runs, and the report prints what that many runs can miss. A test failing
-  one run in fifty is almost certainly still there after seven.
-- **It is not fast.** See "What it costs" above. Every run is a real pytest
-  process, by design: that is what makes the conditions controllable.
-- **One cause can hide another, and the report says when.** Attribution works by
-  exclusion: an arm counts when its failure rate *differs* from the baseline's. That needs
-  the baseline to have room to differ. A test that fails in **every** baseline run cannot
-  fail more often under any arm, so an arm sitting at the same rate was never really
-  asked — measured on a test that is both order-dependent and clock-dependent, where the
-  clock arm reads 1.0 because the order dependence fails it there too, and the clock
-  dependence is invisible. Follow the suggested fix and the test still fails half the
-  time. Those arms are now named in the report and in `masked_arms`, with
-  `second_cause_possible`, so the finding is "this cause, and a second one is not ruled
-  out" rather than "this cause". Finding the second one means fixing the first and running
-  again; nothing here can do it in one pass.
-- **The environment arms do nothing on Windows, and say so.** `TZ` only moves local time
-  where `time.tzset` exists, and `LC_ALL` never reaches `locale.getlocale()` on Windows.
-  Measured there, `TZ=Pacific/Kiritimati` and `TZ=America/New_York` return the *same*
-  local time while `TZ=UTC` shifts by an hour, so the `timezone` and `locale` arms skip
-  themselves with a message instead of producing a cause that reproduces nowhere.
-- **No arm for filesystem ordering.** `os.listdir` order, case-insensitive paths and inode
-  ordering are real sources of flakiness and none of them is varied.
-- **`UNKNOWN` is common and stays that way.** Two independent arms disagreeing means no
-  single cause was established.
-- **Without `--localise` or the `isolation` arm, an order dependence has no direction.**
-  The report says so (`direction undetermined`) instead of guessing which test is to blame.
-- **A test that fails under every sampled condition reads as broken, not flaky**, and is
-  listed separately rather than dropped.
-- **The clock freeze does not reach everything.** A module that did
-  `from datetime import datetime` before the plugin loaded keeps its own reference.
-  Plugins load before test modules, so this is rare, and `--no-freeze-clock` exists for
-  suites that break under it.
-- **Durations measured with `time.time()` read as zero.** That is the freeze working. A
-  test asserting an operation took measurable wall-clock time will be flagged as
-  clock-dependent — correctly.
-- **Only pytest.** unittest suites work as far as pytest can collect them.
+- Python 3.11+, standard library only at runtime; two pytest plugins of its own
+  (`observe.py` records outcomes from pytest's reports, `freeze.py` pins the clock)
+- Your suite's own pytest, run as a subprocess through `--python`; `pytest-xdist` for the
+  optional parallel arm
+- uv, pytest and ruff; GitHub Actions on Ubuntu and Windows, Python 3.11 to 3.14, plus a
+  wheel build that runs the suite against the installed package
 
 ## Layout
 
@@ -530,12 +372,12 @@ src/flake_detective/
   types.py       the causes, and what distinguishes them
 ```
 
-From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`. That runs the 145 fast tests (plus 2 that skip on Windows; about 40 seconds); `pytest -m slow` runs the 14 end-to-end ones that put real suites through every arm, and `pytest -m "slow or not slow"` runs all 161, as CI does.
+From source: `git clone https://github.com/hammasbuilds/flake-detective && cd flake-detective && pip install -e ".[dev]" && pytest`. That runs the 151 fast tests (2 of them skip on Windows); `pytest -m slow` runs the 14 end-to-end ones that put real suites through every arm, and `pytest -m "slow or not slow"` runs all 165, as CI does.
 
-**Run it the way CI does before trusting a pass.** `addopts = "-m 'not slow'"` means a plain `pytest` deselects the end-to-end tests, and one of them sat failing through a commit for exactly that reason: `ALONE_RUNS` became 3, which costs two more probes before the bisection starts, and the probe-budget assertion that should have caught it was never run locally.
+A plain `pytest` deselects the slow end-to-end tests (`addopts = "-m 'not slow'"`); run `pytest -m "slow or not slow"` as CI does.
 
 `pytest --cov=flake_detective -m "slow or not slow"` reports **87%** of statements. Deselecting the slow tests drops it to 80% and `bench.py` to 34%, which is the clearer reason to run them: the benchmark is nearly all end-to-end.
 
-## License
+## Licence
 
-MIT - see [LICENSE](https://github.com/hammasbuilds/flake-detective/blob/main/LICENSE).
+MIT - see [LICENSE](LICENSE).

@@ -1,4 +1,4 @@
-"""The README's "What it prints" block is what the documented command prints.
+"""The README's "Sample input / output" block is what the documented command prints.
 
 `flake-detective fixture ./fx` then `flake-detective investigate ./fx --seed 0`: with the
 seed fixed, the order, hash-seed and clock rows and their verdicts are deterministic, so
@@ -38,7 +38,7 @@ def _rows(text: str) -> list[str]:
 @pytest.mark.slow
 @pytest.mark.skipif(not README.exists(), reason="README.md is not shipped with the tests")
 def test_the_readme_block_is_what_the_command_prints(tmp_path, capsys):
-    shown = README.read_text(encoding="utf-8").split("## What it prints", 1)[1]
+    shown = README.read_text(encoding="utf-8").split("## Sample input / output", 1)[1]
     shown = shown.split("```", 2)[1]
     assert cli.main(["fixture", str(tmp_path / "fx")]) == 0
     capsys.readouterr()
