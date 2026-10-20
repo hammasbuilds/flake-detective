@@ -23,6 +23,25 @@ is for maintainers and CI owners of Python test suites.
 - `bench` scores the tool on a built-in suite with known answers; `--json` and
   `--fail-on-flake` make it a CI step.
 
+## Screenshots
+
+A small browser front end drives the package for demonstrations. It is a local demo and is **not part of
+the package** — the package has no web surface and no runtime dependencies. Every result on these screens
+is a live call into the library.
+
+![Overview](https://raw.githubusercontent.com/hammasbuilds/flake-detective/main/docs/screenshots/00-overview.png)
+*The front end as it opens: every feature is a tab, and the page states that nothing on it is precomputed.*
+
+![Investigate A Suite](https://raw.githubusercontent.com/hammasbuilds/flake-detective/main/docs/screenshots/01-investigate-a-suite.png)
+*Each flaky test with the cause that makes it flip, and its failure rate under every condition.*
+
+![Score The Classifier](https://raw.githubusercontent.com/hammasbuilds/flake-detective/main/docs/screenshots/02-score-the-classifier.png)
+*The classifier scored on a suite whose causes are known: detected, attributed, and stable tests wrongly flagged.*
+
+![The Suite Used](https://raw.githubusercontent.com/hammasbuilds/flake-detective/main/docs/screenshots/03-the-suite-used.png)
+*The benchmark suite itself — one file per cause, so the scoring can be checked.*
+
+
 ## Install
 
 ```bash
