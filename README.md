@@ -23,6 +23,16 @@ is for maintainers and CI owners of Python test suites.
 - `bench` scores the tool on a built-in suite with known answers; `--json` and
   `--fail-on-flake` make it a CI step.
 
+## Architecture
+
+![Pipeline](https://raw.githubusercontent.com/hammasbuilds/flake-detective/main/docs/screenshots/architecture.png)
+*The path a call travels, stage by stage: one thing per arm -> freeze the clock -> record every run -> classify -> bisect -> report. Every stage is a module in this
+repository. Animated: [`docs/architecture.html`](https://github.com/hammasbuilds/flake-detective/blob/main/docs/architecture.html) — one file, no
+dependencies, opens in any browser.*
+
+![Decision architecture](https://raw.githubusercontent.com/hammasbuilds/flake-detective/main/docs/screenshots/architecture-deep.png)
+*16 tests, one condition changed per arm, so the arm that flips a test names its cause: order 3, hash-seed 1, clock 1, and 11 stable tests not flagged. Animated: [`docs/architecture-deep.html`](https://github.com/hammasbuilds/flake-detective/blob/main/docs/architecture-deep.html).*
+
 ## Screenshots
 
 A small browser front end drives the package for demonstrations. It is a local demo and is **not part of
