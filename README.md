@@ -398,4 +398,4 @@ A plain `pytest` deselects the slow end-to-end tests (`addopts = "-m 'not slow'"
 
 ## Licence
 
-MIT - see [LICENSE](LICENSE).
+MIT - see [LICENSE](https://github.com/hammasbuilds/flake-detective/blob/main/LICENSE).
