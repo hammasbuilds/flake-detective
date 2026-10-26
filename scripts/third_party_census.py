@@ -96,6 +96,54 @@ def test_dir(root: Path) -> Path | None:
     return None
 
 
+TEST_GROUP = re.compile(r"test|dev|check|^ci$", re.I)
+NOT_TEST_GROUP = re.compile(r"doc|bench|emscripten|lint|release|min|publish|typing", re.I)
+
+
+def declared_groups(root: Path) -> list[str]:
+    """Group names a project really declares, in a sensible install order.
+
+    Read from pyproject.toml rather than guessed, because `uv pip install --group`
+    returns 0 for a group that does not exist, so a return code cannot tell the
+    difference between installed and absent.
+    """
+    pyproject = root / "pyproject.toml"
+    if not pyproject.exists():
+        return []
+    try:
+        import tomllib
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    names = list(data.get("dependency-groups", {}))
+    wanted = [n for n in names if TEST_GROUP.search(n) and not NOT_TEST_GROUP.search(n)]
+    # `test` before `dev` so the lighter set lands first, then anything it missed.
+    return sorted(wanted, key=lambda n: (0 if n.lower().startswith("test") else 1, n))
+
+
+def install_test_deps(root: Path, py: Path, pip) -> list[str]:
+    """Install every test-ish group and extra. Returns what was actually applied."""
+    applied = []
+    for group in declared_groups(root):
+        done = subprocess.run(["uv", "pip", "install", "-q", "--python", str(py),
+                               "--group", group], cwd=root,
+                              capture_output=True, text=True, timeout=900)
+        if done.returncode == 0 and "was not found" not in (done.stderr or ""):
+            applied.append(f"group:{group}")
+    if not applied:
+        for extra in ("test", "tests", "testing", "dev"):
+            if pip(f"{root}[{extra}]").returncode == 0:
+                applied.append(f"extra:{extra}")
+                break
+    for req in ("test-requirements.txt", "requirements-test.txt", "dev-requirements.txt",
+                "requirements-dev.txt", "requirements/test.txt", "requirements/dev.txt"):
+        path = root / req
+        if path.exists() and pip("-r", str(path)).returncode == 0:
+            applied.append(req)
+            break
+    return applied
+
+
 def prepare(root: Path, package: str, version: str, tests: Path,
             cap: float) -> tuple[Path | None, str, float]:
     """A venv whose clean suite passes quickly, or the reason it does not qualify."""
@@ -115,13 +163,7 @@ def prepare(root: Path, package: str, version: str, tests: Path,
         last = (base.stderr or "").strip().splitlines()
         return None, f"install failed: {last[-1][:110] if last else '?'}", 0.0
 
-    for group in ("test", "tests", "testing", "dev"):
-        if pip("--group", group, cwd=root).returncode == 0:
-            break
-    else:
-        for extra in ("test", "tests", "testing", "dev"):
-            if pip(f"{root}[{extra}]").returncode == 0:
-                break
+    install_test_deps(root, py, pip)
 
     t0 = time.time()
     try:
@@ -171,7 +213,7 @@ def main() -> int:
             row["excluded"] = "no sdist published"
         else:
             row["version"], url = sd
-            with tempfile.TemporaryDirectory(prefix="fd-census-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="fd-census-", ignore_cleanup_errors=True) as tmp:
                 root = unpack(url, Path(tmp))
                 if root is None:
                     row["excluded"] = "sdist ships no test directory"
