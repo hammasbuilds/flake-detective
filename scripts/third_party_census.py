@@ -258,6 +258,10 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=7)
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--budget", type=int, default=1800)
+    ap.add_argument("--resume", action="store_true",
+                    help="keep rows already in --out and process only the rest. This "
+                         "census has been restarted repeatedly for harness fixes, and "
+                         "each restart previously discarded every completed candidate")
     ap.add_argument("--out", default="third-party-census.json")
     args = ap.parse_args()
 
@@ -270,9 +274,21 @@ def main() -> int:
     print(f"{len(names)} packages from the external top-downloads list")
     print(f"clean-suite cap: {args.max_clean_seconds}s (an investigation runs it "
           f"{4 * args.runs} times)\n")
-    out, results, started = Path(args.out), [], time.time()
+    out = Path(args.out)
+    results: list[dict] = []
+    if args.resume and out.exists():
+        try:
+            results = json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            results = []
+    done_names = {r["package"] for r in results if isinstance(r, dict) and "package" in r}
+    if done_names:
+        print(f"resuming: {len(done_names):,} candidates already processed")
+    started = time.time()
 
     for i, name in enumerate(names, 1):
+        if name in done_names:
+            continue
         try:
             row: dict = {"package": name}
             sd = newest_sdist(name)
