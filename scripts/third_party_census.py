@@ -178,14 +178,17 @@ def prepare(root: Path, package: str, version: str, tests: Path,
     text = clean.stdout + clean.stderr
     collected = max((int(m.group(1)) for m in re.finditer(r"(\d+) (?:passed|collected)", text)),
                     default=0)
-    if clean.returncode != 0:
-        tail = [line for line in text.strip().splitlines() if line.strip()]
-        return None, f"clean suite does not pass: {tail[-1][:100] if tail else '?'}", seconds
+    failed = max((int(m.group(1)) for m in re.finditer(r"(\d+) failed", text)), default=0)
     if collected == 0:
-        return None, "clean suite passes but collects no tests", seconds
+        return None, "clean suite collects no tests", seconds
+    # A test that always fails is not flaky; the baseline arm is the control that
+    # says so, and the tool reports those separately as broken. Excluding a suite
+    # over them threw away uvicorn - 2 failures among 1,327 tests.
+    if failed > max(5, collected * 0.2):
+        return None, f"clean suite mostly broken: {failed} of {collected} failing", seconds
     if seconds > cap:
         return None, f"clean suite takes {seconds:.0f}s, over the {cap:.0f}s cap", seconds
-    return py, f"{collected} tests in {seconds:.1f}s", seconds
+    return py, f"{collected} tests ({failed} already failing) in {seconds:.1f}s", seconds
 
 
 def main() -> int:
