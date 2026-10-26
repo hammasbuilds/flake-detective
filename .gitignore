@@ -1,9 +1,10 @@
 __pycache__/
 *.py[cod]
-.venv/
+.venv*/
 venv/
 *.egg-info/
 dist/
+dist_check/
 build/
 .pytest_cache/
 .ruff_cache/
