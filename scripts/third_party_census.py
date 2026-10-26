@@ -255,40 +255,47 @@ def main() -> int:
     out, results, started = Path(args.out), [], time.time()
 
     for i, name in enumerate(names, 1):
-        row: dict = {"package": name}
-        sd = newest_sdist(name)
-        if sd is None:
-            row["excluded"] = "no sdist published"
-        else:
-            row["version"], url = sd
-            with tempfile.TemporaryDirectory(prefix="fd-census-", dir=SCRATCH,
-                                            ignore_cleanup_errors=True) as tmp:
-                root = unpack(url, Path(tmp))
-                if root is None:
-                    row["excluded"] = "sdist ships no test directory"
-                elif (tests := test_dir(root)) is None:
-                    row["excluded"] = "no test_*.py under tests/"
-                else:
-                    py, why, seconds = prepare(root, name, row["version"], tests,
-                                               args.max_clean_seconds)
-                    row["clean_run"] = why
-                    row["clean_seconds"] = round(seconds, 1)
-                    if py is None:
-                        row["excluded"] = why
+        try:
+            row: dict = {"package": name}
+            sd = newest_sdist(name)
+            if sd is None:
+                row["excluded"] = "no sdist published"
+            else:
+                row["version"], url = sd
+                with tempfile.TemporaryDirectory(prefix="fd-census-", dir=SCRATCH,
+                                                ignore_cleanup_errors=True) as tmp:
+                    root = unpack(url, Path(tmp))
+                    if root is None:
+                        row["excluded"] = "sdist ships no test directory"
+                    elif (tests := test_dir(root)) is None:
+                        row["excluded"] = "no test_*.py under tests/"
                     else:
-                        report = Path(tmp) / "score.json"
-                        cmd = [sys.executable, str(HERE / "inject_and_score.py"), str(root),
-                               "--runs", str(args.runs), "--jobs", str(args.jobs),
-                               "--python", str(py), "--json", str(report)]
-                        try:
-                            subprocess.run(cmd, capture_output=True, text=True,
-                                           timeout=args.budget)
-                            if report.exists():
-                                row["score"] = json.loads(report.read_text(encoding="utf-8"))
-                            else:
-                                row["excluded"] = "scorer produced no report"
-                        except subprocess.TimeoutExpired:
-                            row["excluded"] = f"budget exceeded ({args.budget}s)"
+                        py, why, seconds = prepare(root, name, row["version"], tests,
+                                                   args.max_clean_seconds)
+                        row["clean_run"] = why
+                        row["clean_seconds"] = round(seconds, 1)
+                        if py is None:
+                            row["excluded"] = why
+                        else:
+                            report = Path(tmp) / "score.json"
+                            cmd = [sys.executable, str(HERE / "inject_and_score.py"), str(root),
+                                   "--runs", str(args.runs), "--jobs", str(args.jobs),
+                                   "--python", str(py), "--json", str(report)]
+                            try:
+                                subprocess.run(cmd, capture_output=True, text=True,
+                                               timeout=args.budget)
+                                if report.exists():
+                                    row["score"] = json.loads(report.read_text(encoding="utf-8"))
+                                else:
+                                    row["excluded"] = "scorer produced no report"
+                            except subprocess.TimeoutExpired:
+                                row["excluded"] = f"budget exceeded ({args.budget}s)"
+        except Exception as exc:  # noqa: BLE001
+            # A census walks a thousand projects it has never seen, over a network,
+            # running their code. Two runs died at their first awkward project - an
+            # unguarded TimeoutExpired from a clean suite, an SSL TimeoutError while
+            # fetching an sdist. Anything that escapes is that candidate's result.
+            row["excluded"] = f"candidate failed: {type(exc).__name__}: {exc}"[:160]
         results.append(row)
         state = row.get("excluded", "scored")
         rate = (time.time() - started) / i
