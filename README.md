@@ -419,6 +419,7 @@ not planted.
 | deep | 5 | 166 | 5 | **0** |
 | wide, 2026-09-29 | 14 | 1,752 | 3 | **0** |
 | deep, 2026-10-07, at recorded revisions | 3 | 574 | 5 | **1** (a real 1.5% nondeterministic test in suite-auditor, since fixed there) |
+| deep, 2026-10-28, `assay-drift` at `6143651` | 1 | 274 | 7 | **0** (168s, order seed 1162333027) |
 
 ## Good to know
 
