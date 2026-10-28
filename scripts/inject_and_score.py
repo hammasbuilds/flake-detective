@@ -138,20 +138,7 @@ def score_one(
         copy = work / repo.name
         # Copy rather than plant in place. Planting into the real repository and
         # deleting afterwards works right up to the run that crashes.
-        shutil.copytree(
-            repo,
-            copy,
-            symlinks=True,
-            ignore=shutil.ignore_patterns(
-                ".git",
-                ".venv",
-                "__pycache__",
-                ".pytest_cache",
-                "node_modules",
-                ".mypy_cache",
-                ".ruff_cache",
-            ),
-        )
+        shutil.copytree(repo, copy, symlinks=True, ignore=_ignore)
         target = test_dir(copy)
         if target is None:
             return {"repo": repo.name, "cause": cause.value, "outcome": "no test directory"}
@@ -189,6 +176,61 @@ def score_one(
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+JUNK = (
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    ".mypy_cache",
+    ".ruff_cache",
+)
+
+
+def is_junction(path: Path) -> bool:
+    """True for a Windows directory junction.
+
+    `shutil.copytree(symlinks=True)` recreates symlinks instead of following them, which
+    reads as covering every kind of link. It does not cover junctions: `os.path.islink()`
+    returns **False** for one, so copytree walks through it and copies the target.
+
+    This matters because this script is pointed at local checkouts - it is how the
+    twelve-suite figure in the README was measured - and those checkouts keep their data
+    in a junction. One here points at 13.8 GB, and each arm makes its own copy, so four
+    arms would copy it four times. The same defect was found in suite-auditor's scratch
+    copy, where it turned a 122-second audit into fifteen minutes of silence.
+
+    `Path.is_junction()` from Python 3.12, the lstat reparse tag below it, and never
+    raising either way: this walks a tree the script did not create.
+    """
+    try:
+        if hasattr(path, "is_junction"):
+            return bool(path.is_junction())
+        import os
+        import stat as _stat
+
+        st = os.lstat(path)
+        return bool(st.st_file_attributes & _stat.FILE_ATTRIBUTE_REPARSE_POINT) and (
+            getattr(st, "st_reparse_tag", 0)
+            == getattr(_stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+        )
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _ignore(directory: str, names: list[str]) -> set[str]:
+    """Junk directories, and any junction.
+
+    A junction is skipped rather than recreated: recreated, it would point at the user's
+    own files, and a planted flake plus a suite run that writes through it would reach
+    them. A suite that needs the data then fails on the copy, which is honest - the arm
+    reports zero runs and `arm_measured` excludes it - rather than silently writing
+    outside the copy.
+    """
+    d = Path(directory)
+    return {n for n in names if n in JUNK or is_junction(d / n)}
 
 
 def arm_measured(arm: dict) -> bool:
