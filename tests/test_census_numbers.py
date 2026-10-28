@@ -140,3 +140,38 @@ def test_the_summary_is_the_reduction_of_a_census_that_exists() -> None:
         "docs/census-summary.json is not what scripts/census_summary.py produces from "
         "docs/third-party-census.json - regenerate it"
     )
+
+
+def test_the_three_kinds_of_shortfall_are_separated() -> None:
+    """`cause_right` over `measured` mixes "not detected" with "detected and misnamed".
+
+    A README sentence written from the difference 667 - 651 called all 16 of them wrong
+    causes. They are 2 plants never detected, 13 reported as `unknown` - seen to flip,
+    cause declined - and exactly 1 wrong cause, a nondeterminism plant reported as
+    `clock`. The three say different things about the tool, and the worst of them is the
+    rarest, so publishing only the total understated it.
+    """
+    s = _summary()
+    assert (
+        s["cause_right"] + s["cause_unknown"] + s["cause_wrong"] + s["not_detected"]
+        == s["measured_arms"]
+    ), "the four outcomes must account for every arm that ran"
+    assert s["found"] == s["measured_arms"] - s["not_detected"]
+    assert s["cause_right"] + s["cause_unknown"] + s["cause_wrong"] == s["found"]
+    assert len(s["wrong_causes"]) == len({
+        (w["planted"], w["reported"]) for w in s["wrong_causes"]
+    }), "a planted/reported pair is listed twice"
+    assert sum(w["arms"] for w in s["wrong_causes"]) == s["cause_wrong"]
+    text = _readme()
+    for figure in (
+        f"| detected and named correctly | {s['cause_right']} |",
+        f"| detected, cause reported `unknown` | {s['cause_unknown']} |",
+        f"| not detected at all | {s['not_detected']} |",
+    ):
+        assert figure in text, f"the README does not state {figure!r}"
+    assert f"**{s['cause_wrong']}**" in text
+    for cohort in s["causes"].values():
+        assert (
+            cohort["cause_right"] + cohort["cause_unknown"] + cohort["cause_wrong"]
+            + cohort["not_detected"] == cohort["measured"]
+        )

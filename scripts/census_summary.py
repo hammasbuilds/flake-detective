@@ -75,6 +75,7 @@ def summarise(rows: list[dict]) -> dict:
     # flaky independently of what was planted there, which is a different claim from "the
     # report sometimes names extra tests" - and the totals are not usable on their own:
     # two packages account for most of them.
+    wrong_causes: collections.Counter = collections.Counter()
     collateral_sizes: list[int] = []
     packages_with_collateral = 0
     packages_collateral_in_every_arm = 0
@@ -107,7 +108,8 @@ def summarise(rows: list[dict]) -> dict:
         for arm in arms:
             c = by_cause.setdefault(
                 arm["cause"],
-                {"arms": 0, "measured": 0, "found": 0, "cause_right": 0, "unmeasured": 0},
+                {"arms": 0, "measured": 0, "found": 0, "cause_right": 0, "unmeasured": 0,
+                 "not_detected": 0, "cause_unknown": 0, "cause_wrong": 0},
             )
             c["arms"] += 1
             if not arm_measured(arm):
@@ -116,6 +118,20 @@ def summarise(rows: list[dict]) -> dict:
             c["measured"] += 1
             c["found"] += bool(arm.get("found"))
             c["cause_right"] += bool(arm.get("cause_correct"))
+            # The three ways an arm can fall short, kept apart. `cause_right` over
+            # `measured` mixes "not detected" with "detected and misnamed", and those
+            # are different claims about the tool: a README sentence written from the
+            # difference 667 - 651 called all 16 of them wrong causes, when 2 were
+            # plants never seen at all, 13 were reported as `unknown` - seen to flip,
+            # cause declined - and exactly one was a wrong cause.
+            if not arm.get("found"):
+                c["not_detected"] += 1
+            elif not arm.get("cause_correct"):
+                if (arm.get("reported_cause") or "unknown") == "unknown":
+                    c["cause_unknown"] += 1
+                else:
+                    c["cause_wrong"] += 1
+                    wrong_causes[(arm["cause"], arm.get("reported_cause"))] += 1
             collateral_arms += bool(arm.get("collateral"))
             collateral_tests += len(arm.get("collateral") or [])
 
@@ -127,6 +143,9 @@ def summarise(rows: list[dict]) -> dict:
             "unmeasured": c["unmeasured"],
             "found": c["found"],
             "cause_right": c["cause_right"],
+            "not_detected": c["not_detected"],
+            "cause_unknown": c["cause_unknown"],
+            "cause_wrong": c["cause_wrong"],
             # None, not 0.0, when nothing was measured: a cause with no measured arm has
             # no rate, and 0% would read as "this cause is never detected".
             "found_share": round(c["found"] / c["measured"], 4) if c["measured"] else None,
@@ -145,6 +164,12 @@ def summarise(rows: list[dict]) -> dict:
         "measured_arms": total_measured,
         "found": sum(c["found"] for c in causes.values()),
         "cause_right": sum(c["cause_right"] for c in causes.values()),
+        "not_detected": sum(c["not_detected"] for c in causes.values()),
+        "cause_unknown": sum(c["cause_unknown"] for c in causes.values()),
+        "cause_wrong": sum(c["cause_wrong"] for c in causes.values()),
+        "wrong_causes": [
+            {"planted": a, "reported": b, "arms": n} for (a, b), n in wrong_causes.most_common()
+        ],
         # How often a detected plant comes with other tests named alongside it. The
         # census records them per arm and no figure used them; a user who acts on the
         # report sees these names too.

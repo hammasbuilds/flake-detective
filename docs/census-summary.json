@@ -21,6 +21,9 @@
    "unmeasured": 0,
    "found": 167,
    "cause_right": 165,
+   "not_detected": 0,
+   "cause_unknown": 2,
+   "cause_wrong": 0,
    "found_share": 1.0,
    "cause_right_share": 0.988
   },
@@ -30,6 +33,9 @@
    "unmeasured": 0,
    "found": 167,
    "cause_right": 167,
+   "not_detected": 0,
+   "cause_unknown": 0,
+   "cause_wrong": 0,
    "found_share": 1.0,
    "cause_right_share": 1.0
   },
@@ -39,6 +45,9 @@
    "unmeasured": 0,
    "found": 166,
    "cause_right": 161,
+   "not_detected": 1,
+   "cause_unknown": 4,
+   "cause_wrong": 1,
    "found_share": 0.994,
    "cause_right_share": 0.9641
   },
@@ -48,6 +57,9 @@
    "unmeasured": 1,
    "found": 165,
    "cause_right": 158,
+   "not_detected": 1,
+   "cause_unknown": 7,
+   "cause_wrong": 0,
    "found_share": 0.994,
    "cause_right_share": 0.9518
   }
@@ -55,6 +67,16 @@
  "measured_arms": 667,
  "found": 665,
  "cause_right": 651,
+ "not_detected": 2,
+ "cause_unknown": 13,
+ "cause_wrong": 1,
+ "wrong_causes": [
+  {
+   "planted": "nondeterminism",
+   "reported": "clock",
+   "arms": 1
+  }
+ ],
  "arms_with_collateral": 122,
  "collateral_tests": 2593,
  "packages_with_collateral": 36,

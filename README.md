@@ -371,8 +371,23 @@ suite. Over the 667 arms that ran:
 **Two causes were detected in every suite that ran.** A rate of exactly 100% usually
 means the measurement cannot discriminate, and here it partly does not: a planted
 hash-seed flake is detectable by construction, so finding it is the easy half. Naming the
-cause is the half that separates: order is right 95.2% of the time, and the 16 wrong
-causes are all in the two families that change which other tests run.
+cause is the half that separates, and order is right 95.2% of the time.
+
+**Of the 667 arms, 16 fell short, in three different ways** - a distinction the single
+`cause_right` figure hides, since 667 - 651 counts a plant that was never seen alongside
+one that was named wrongly:
+
+| | arms |
+|---|---:|
+| detected and named correctly | 651 |
+| detected, cause reported `unknown` | 13 |
+| detected, **wrong** cause named | **1** |
+| not detected at all | 2 |
+
+The one wrong cause is a nondeterminism plant reported as `clock`. Thirteen times the
+tool saw the test flip and declined to name a cause, which is a different failure from
+naming the wrong one and the one you would rather have: `unknown` sends a reader to the
+evidence rows, a wrong cause sends them to the wrong fix.
 
 **The denominator is the arms that ran, not the packages scored.** Eight packages
 collected tests and then ran none, because their suites need interpreters this one is not
