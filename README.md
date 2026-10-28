@@ -337,6 +337,62 @@ clones toolz at `451af60` and sqlparse at `60cdc64` and plants one flake of each
 16 of 16 plants detected, 15 of 16 with the right cause. The two sqlparse tests flagged on
 the busy day assert that a parse finishes in under one second.
 
+**Planted in the 1,000 most-downloaded PyPI packages**
+(`python scripts/third_party_census.py`, 87s per measured package, restarted across
+harness fixes with `--resume`; figures from
+`docs/census-summary.json`, which `scripts/census_summary.py` reduces the raw census to):
+
+| | packages |
+|---|---:|
+| **scored** | **167** |
+| sdist ships no test directory | 406 |
+| clean suite collects no tests | 257 |
+| clean suite slower than the 25s cap | 83 |
+| no sdist published | 46 |
+| clean suite mostly broken | 17 |
+| install failed | 9 |
+| no arm ran the suite (needs its own interpreter) | 8 |
+| scorer produced no report | 4 |
+| candidate failed | 2 |
+| budget exceeded | 1 |
+| **considered** | **1,000** |
+
+Four flakes are planted per scored package, one per cause, each in its own copy of the
+suite. Over the 667 arms that ran:
+
+| planted cause | arms | detected | right cause |
+|---|---:|---:|---:|
+| hash-seed | 167 | 167 (100%) | 167 (100%) |
+| clock | 167 | 167 (100%) | 165 (98.8%) |
+| nondeterminism | 167 | 166 (99.4%) | 161 (96.4%) |
+| order | 166 | 165 (99.4%) | 158 (95.2%) |
+| **all** | **667** | **665 (99.7%)** | **651 (97.6%)** |
+
+**Two causes were detected in every suite that ran.** A rate of exactly 100% usually
+means the measurement cannot discriminate, and here it partly does not: a planted
+hash-seed flake is detectable by construction, so finding it is the easy half. Naming the
+cause is the half that separates: order is right 95.2% of the time, and the 16 wrong
+causes are all in the two families that change which other tests run.
+
+**The denominator is the arms that ran, not the packages scored.** Eight packages
+collected tests and then ran none, because their suites need interpreters this one is not
+- the scorer records that per arm and an earlier reading of the same census averaged
+their four misses into each rate, publishing 94.9% for order where its measured arms give
+99.4%. One package, `rfc3987-syntax`, reported a detection on an arm that scored zero
+runs, so the same filter removes a false positive as well as the false misses.
+
+**36 of the 167 suites had other tests named alongside the plant**, and in 23 of them at
+least one of those tests is named in *every* arm - flaky whatever was planted there, so
+not an artefact of the plant. The median affected arm names 2 such tests; two packages
+carry most of the total between them (`wcmatch` 338, `platformdirs` 123), which is why
+the 2,593-test total is not a usable figure on its own. None of these are verified
+against their upstream projects.
+
+**833 of the thousand could not be put on the scale at all**, 663 of them because the
+published sdist has no test directory or the tests it has collect nothing - the same wall
+every tool in this family meets, and the reason a figure quoted over "the top 1,000
+packages" usually describes a few hundred.
+
 **Planted in twelve of our own suites** (author-run, `scripts/inject_and_score.py`): 48
 plants, **47 detected**, **46 with the right cause**, **0** findings on tests that were
 not planted.

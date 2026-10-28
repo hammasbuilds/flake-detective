@@ -49,6 +49,9 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from inject_and_score import arm_measured  # noqa: E402
 TOP = ("https://raw.githubusercontent.com/hugovk/top-pypi-packages/main/"
        "top-pypi-packages.min.json")
 TEST_FILE = re.compile(r"^[^/]+/(?:src/)?(tests?)/(?:.*/)?test_[^/]*\.py$")
@@ -88,6 +91,17 @@ INFRA_FAILURES = (
     "IndexUnreachable",
     "TimeoutExpired: Command '['uv', 'pip', 'install'",
 )
+
+
+def scored_rows(results: list[dict]) -> list[dict]:
+    """The rows that carry at least one arm that ran, by the predicate the summary uses.
+
+    Written inline as `"score" in row`, which is true of a package whose four arms each
+    scored zero runs because the suite needs its own interpreter. Eight of them were
+    counted as scored and their four misses each averaged into a per-cause rate.
+    """
+    return [r for r in results
+            if isinstance(r, dict) and any(arm_measured(a) for a in r.get("score") or [])]
 
 
 def _is_infra_failure(row: dict) -> bool:
@@ -397,7 +411,19 @@ def main() -> int:
                                 subprocess.run(cmd, capture_output=True, text=True,
                                                timeout=args.budget)
                                 if report.exists():
-                                    row["score"] = json.loads(report.read_text(encoding="utf-8"))
+                                    arms = json.loads(report.read_text(encoding="utf-8"))
+                                    # No arm ran the suite -> an exclusion naming the
+                                    # reason, never a row whose four misses are averaged
+                                    # into a detection rate.
+                                    if any(arm_measured(a) for a in arms):
+                                        row["score"] = arms
+                                    else:
+                                        reasons = sorted({a.get("outcome") or "?" for a in arms})
+                                        row["excluded"] = (
+                                            "no arm ran the suite: "
+                                            + "; ".join(reasons)
+                                        )[:160]
+                                        row["empty_score"] = arms
                                 else:
                                     row["excluded"] = "scorer produced no report"
                             except subprocess.TimeoutExpired:
@@ -416,7 +442,7 @@ def main() -> int:
               f"~{rate * (todo - measured) / 60:.0f}min left", flush=True)
         out.write_text(json.dumps(results, indent=1), encoding="utf-8")
 
-    scored = [r for r in results if "score" in r]
+    scored = scored_rows(results)
     slow = [r for r in results if "over the" in str(r.get("excluded", ""))]
     print(f"\n{len(scored)} of {len(results)} suites scored; {len(results) - len(scored)} "
           f"excluded, of which {len(slow)} for exceeding the clean-time cap")

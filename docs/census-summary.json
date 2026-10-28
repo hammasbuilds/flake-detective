@@ -1,0 +1,77 @@
+{
+ "considered": 1000,
+ "scored": 167,
+ "excluded": 833,
+ "exclusions": {
+  "sdist ships no test directory": 406,
+  "clean suite collects no tests": 257,
+  "clean suite slower than the cap": 83,
+  "no sdist published": 46,
+  "clean suite mostly broken": 17,
+  "install failed": 9,
+  "no arm ran the suite (needs its own interpreter)": 8,
+  "scorer produced no report": 4,
+  "candidate failed": 2,
+  "budget exceeded": 1
+ },
+ "causes": {
+  "clock": {
+   "arms": 167,
+   "measured": 167,
+   "unmeasured": 0,
+   "found": 167,
+   "cause_right": 165,
+   "found_share": 1.0,
+   "cause_right_share": 0.988
+  },
+  "hash-seed": {
+   "arms": 167,
+   "measured": 167,
+   "unmeasured": 0,
+   "found": 167,
+   "cause_right": 167,
+   "found_share": 1.0,
+   "cause_right_share": 1.0
+  },
+  "nondeterminism": {
+   "arms": 167,
+   "measured": 167,
+   "unmeasured": 0,
+   "found": 166,
+   "cause_right": 161,
+   "found_share": 0.994,
+   "cause_right_share": 0.9641
+  },
+  "order": {
+   "arms": 167,
+   "measured": 166,
+   "unmeasured": 1,
+   "found": 165,
+   "cause_right": 158,
+   "found_share": 0.994,
+   "cause_right_share": 0.9518
+  }
+ },
+ "measured_arms": 667,
+ "found": 665,
+ "cause_right": 651,
+ "arms_with_collateral": 122,
+ "collateral_tests": 2593,
+ "packages_with_collateral": 36,
+ "packages_collateral_in_every_arm": 23,
+ "collateral_per_affected_arm_median": 2.0,
+ "largest_collateral_packages": [
+  {
+   "package": "wcmatch",
+   "arm_max": 338
+  },
+  {
+   "package": "platformdirs",
+   "arm_max": 123
+  },
+  {
+   "package": "typeguard",
+   "arm_max": 51
+  }
+ ]
+}

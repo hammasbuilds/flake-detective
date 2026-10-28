@@ -191,6 +191,31 @@ def score_one(
         shutil.rmtree(work, ignore_errors=True)
 
 
+def arm_measured(arm: dict) -> bool:
+    """True when this arm actually ran the suite, so its verdict is evidence.
+
+    `outcome` has recorded "arms scored zero runs (suite needs its own environment)"
+    since the first census, and the comment above it says plainly that counting such an
+    arm as a miss would blame the detector for an environment problem. Nothing acted on
+    it. A finished 1,000-project census counted 175 packages as scored, eight of which
+    ran zero tests in all four arms, and published detection per cause over 175: 94.9%
+    for order, where the measured arms give 99.4%.
+
+    It cuts both ways. rfc3987-syntax's order arm scored zero runs and recorded
+    `found: True` - a hit with no run behind it - so a filter on `found` alone would have
+    kept a false positive as well as the seven false misses.
+
+    One predicate, called by the census when it writes a row and by
+    scripts/census_summary.py when it counts them, so the stored arms and the published
+    denominators cannot drift apart.
+    """
+    return (
+        arm.get("outcome") == "ok"
+        and bool(arm.get("total_tests"))
+        and (arm.get("min_arm_runs") or 0) > 0
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("repos", nargs="+", type=Path)

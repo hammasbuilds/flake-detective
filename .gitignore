@@ -15,3 +15,10 @@ build/
 .coverage.*
 htmlcov/
 coverage.xml
+
+# The raw thousand-package census: 540 KB, because every arm carries the full list of
+# tests it named. docs/census-summary.json is the committed reduction of it, and that is
+# what the README's census figures and tests/test_census_numbers.py read. Regenerate the
+# raw file with scripts/third_party_census.py and the summary with scripts/census_summary.py.
+docs/third-party-census.json
+docs/*-census.json.poisoned
