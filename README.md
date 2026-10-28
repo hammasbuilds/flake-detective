@@ -92,7 +92,7 @@ flake-detective fixture ./flake-fixture
 
 ## Sample input / output
 
-The built-in benchmark's suite — written to be flaky in four specified ways — at the
+The built-in benchmark’s suite — written to be flaky in eight specified ways, of which the default three arms can score four — at the
 default 7 runs per arm, from `flake-detective fixture ./fx` then
 `flake-detective investigate ./fx --seed 0`:
 

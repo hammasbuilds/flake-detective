@@ -37,6 +37,7 @@ import io
 import json
 import shutil
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -58,6 +59,70 @@ TEST_FILE = re.compile(r"^[^/]+/(?:src/)?(tests?)/(?:.*/)?test_[^/]*\.py$")
 # an infrastructure failure that looked like a property of those projects.
 SCRATCH = Path(os.environ.get("CENSUS_SCRATCH", r"D:\_census_scratch"))
 
+# Owned by _pin_temp_to_scratch_drive(); sweep_scratch() must leave them alone.
+PINNED_DIRS = frozenset({"tmp", "uv-cache"})
+
+
+# Phrases that describe the run rather than the candidate. A row excluded for one of
+# these was never measured, so --resume drops it and measures it again. C: filling to
+# zero bytes free produced 295 such rows across two censuses; keeping them would have
+# published an infrastructure failure as a property of those packages.
+# Phrases that mean "this machine failed", never "this project cannot be measured".
+# The first list came from the failures visible at the time. A completed 1,000-project
+# census then still carried seven rows this list did not match: five reading
+# "failed to write to file C:\...\uv\cache\..." - uv's wording when the drive it
+# caches to is full, which never contains the phrase "not enough space" - and two
+# TimeoutExpired on `uv pip install`, produced while three censuses shared one throttled
+# link. Matching on the symptom one failure happened to print is how six hours of
+# measurement keeps a verdict about the machine as a verdict about a package, so each
+# entry below names a mechanism and the wordings it is known to take.
+INFRA_FAILURES = (
+    "could not create a venv",
+    # Disk full, in every wording seen: Python's, the OS's, and uv's.
+    "not enough space on the disk",
+    "no space left on device",
+    "failed to write to file",
+    "OSError: [WinError 112]",
+    # Index unreachable or too slow to use - a property of the link, not the package.
+    "could not reach the index",
+    "IndexUnreachable",
+    "TimeoutExpired: Command '['uv', 'pip', 'install'",
+)
+
+
+def _is_infra_failure(row: dict) -> bool:
+    """True when this row records a failure of the harness, not a fact about the target."""
+    text = f"{row.get('excluded') or ''} {row.get('error') or ''}"
+    return any(phrase.lower() in text.lower() for phrase in INFRA_FAILURES)
+
+
+def _pin_temp_to_scratch_drive() -> None:
+    """Send every temp path a child process may use to the scratch drive.
+
+    SCRATCH alone is not enough. `tempfile.mkdtemp` inside the tools and inside the
+    suites under test follows TMPDIR, and uv caches downloads under %LOCALAPPDATA%;
+    both are on C: by default here, and C: filled to zero bytes because of it. Set
+    before the first subprocess so everything spawned inherits it.
+    """
+    tmp = SCRATCH / "tmp"
+    cache = SCRATCH / "uv-cache"
+    tmp.mkdir(parents=True, exist_ok=True)
+    cache.mkdir(parents=True, exist_ok=True)
+    for name in ("TMPDIR", "TMP", "TEMP"):
+        os.environ[name] = str(tmp)
+    os.environ.setdefault("UV_CACHE_DIR", str(cache))
+    tempfile.tempdir = None  # drop any value tempfile cached from the old TMPDIR
+    # Assert, do not announce. tempfile silently ignores an unusable TMPDIR and falls
+    # back to the system temp, so printing the intended path proves nothing.
+    landed = pathlib.Path(tempfile.gettempdir()).resolve()
+    if landed.drive.upper() != SCRATCH.resolve().drive.upper():
+        raise RuntimeError(
+            f"temp did not pin: wanted a path on {SCRATCH.resolve().drive}, "
+            f"tempfile resolves to {landed}. Refusing to run - this is how C: filled."
+        )
+    print(f"temp pinned to {landed}")
+    print(f"uv cache pinned to {os.environ['UV_CACHE_DIR']}")
+
 
 def _remove_tree(path: Path, tries: int = 5) -> None:
     """Delete a tree, waiting out the handles Windows holds briefly after a process exits."""
@@ -78,8 +143,10 @@ def sweep_scratch() -> int:
     if not SCRATCH.exists():
         return 0
     gone = 0
+    # Never sweep the directories the pin owns. Deleting them leaves TMPDIR pointing at
+    # a missing path, and tempfile then falls back to the system temp on C: in silence.
     for child in SCRATCH.iterdir():
-        if child.is_dir():
+        if child.is_dir() and child.name not in PINNED_DIRS:
             _remove_tree(child)
             gone += not child.exists()
     return gone
@@ -267,6 +334,7 @@ def main() -> int:
 
     SCRATCH.mkdir(parents=True, exist_ok=True)
     swept = sweep_scratch()
+    _pin_temp_to_scratch_drive()
     if swept:
         print(f"swept {swept} scratch tree(s) left by an earlier run")
     print(f"scratch: {SCRATCH}")
@@ -281,14 +349,24 @@ def main() -> int:
             results = json.loads(out.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             results = []
+    retry = [r for r in results if isinstance(r, dict) and _is_infra_failure(r)]
+    if retry:
+        print(f"retrying {len(retry):,} candidates whose exclusion was an infrastructure failure, not a finding")
+        results = [r for r in results if not (isinstance(r, dict) and _is_infra_failure(r))]
     done_names = {r["package"] for r in results if isinstance(r, dict) and "package" in r}
     if done_names:
         print(f"resuming: {len(done_names):,} candidates already processed")
     started = time.time()
 
+    # Counted separately from the walk index: on a resumed run most names skip instantly,
+    # and dividing elapsed by the walk index treats those no-ops as work. See the same
+    # fix in suite-auditor's census.
+    measured = 0
+    todo = sum(1 for n in names if n not in done_names)
     for i, name in enumerate(names, 1):
         if name in done_names:
             continue
+        measured += 1
         try:
             row: dict = {"package": name}
             sd = newest_sdist(name)
@@ -332,9 +410,10 @@ def main() -> int:
             row["excluded"] = f"candidate failed: {type(exc).__name__}: {exc}"[:160]
         results.append(row)
         state = row.get("excluded", "scored")
-        rate = (time.time() - started) / i
+        rate = (time.time() - started) / measured
         print(f"  [{i}/{len(names)}] {name:26} {state[:44]:44} "
-              f"{rate:.0f}s/pkg ~{rate * (len(names) - i) / 60:.0f}min left", flush=True)
+              f"{rate:.0f}s/pkg  {measured}/{todo} measured "
+              f"~{rate * (todo - measured) / 60:.0f}min left", flush=True)
         out.write_text(json.dumps(results, indent=1), encoding="utf-8")
 
     scored = [r for r in results if "score" in r]
