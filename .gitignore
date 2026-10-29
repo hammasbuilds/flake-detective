@@ -25,3 +25,6 @@ docs/*-census.json.poisoned
 
 # The re-runner baselines live in their own virtualenv; they are not dependencies.
 .venv-rerun/
+
+# Left by passing "-" to --json, which takes a FILE.
+-
