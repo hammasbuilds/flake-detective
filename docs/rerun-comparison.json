@@ -1,0 +1,76 @@
+{
+ "measured": "2026-10-29",
+ "baseline_versions": {
+  "pytest": "9.2.0",
+  "pytest-rerunfailures": "16.7",
+  "flaky": "3.8.1"
+ },
+ "reruns_per_failure": 6,
+ "suite_runs_under_the_rerunner": 7,
+ "seed": 0,
+ "known_flaky": 8,
+ "stable_but_flaky_looking": 8,
+ "causes_this_platform_can_score": [
+  "test_clock_dependent.py::test_second_is_even",
+  "test_hash_dependent.py::test_first_of_a_set_is_stable",
+  "test_nondeterministic.py::test_unseeded_random",
+  "test_order_dependent.py::test_aaa_first_one_wins"
+ ],
+ "flake_detective": {
+  "detected": 4,
+  "correct_cause": 4,
+  "false_positives": [],
+  "unscoreable": {
+   "test_timezone_dependent.py::test_local_offset_is_the_one_we_developed_in": "timezone",
+   "test_locale_dependent.py::test_uppercasing_i_is_ascii": "locale",
+   "test_parallel_dependent.py::test_exclusive_use_of_a_shared_file": "parallel",
+   "test_needs_setup.py::test_needs_the_helper_to_have_run": "needs-other-test"
+  },
+  "seconds": 21.0,
+  "names_a_cause": true,
+  "raw": {
+   "flaky_in_fixture": 4,
+   "unscoreable": {
+    "test_timezone_dependent.py::test_local_offset_is_the_one_we_developed_in": "timezone",
+    "test_locale_dependent.py::test_uppercasing_i_is_ascii": "locale",
+    "test_parallel_dependent.py::test_exclusive_use_of_a_shared_file": "parallel",
+    "test_needs_setup.py::test_needs_the_helper_to_have_run": "needs-other-test"
+   },
+   "detected": 4,
+   "correct_cause": 4,
+   "misattributed": {},
+   "missed": [],
+   "stable_in_fixture": 8,
+   "false_positives": []
+  }
+ },
+ "pytest_rerunfailures": {
+  "noticed": 4,
+  "noticed_tests": [
+   "test_clock_dependent.py::test_second_is_even",
+   "test_hash_dependent.py::test_first_of_a_set_is_stable",
+   "test_needs_setup.py::test_needs_the_helper_to_have_run",
+   "test_nondeterministic.py::test_unseeded_random"
+  ],
+  "noticed_of_the_common_set": 3,
+  "noticed_tests_in_the_common_set": [
+   "test_clock_dependent.py::test_second_is_even",
+   "test_hash_dependent.py::test_first_of_a_set_is_stable",
+   "test_nondeterministic.py::test_unseeded_random"
+  ],
+  "masked_of_the_common_set": 2,
+  "never_retried_in_the_common_set": [
+   "test_order_dependent.py::test_aaa_first_one_wins"
+  ],
+  "masked": 2,
+  "masked_tests": [
+   "test_clock_dependent.py::test_second_is_even",
+   "test_nondeterministic.py::test_unseeded_random"
+  ],
+  "correct_cause": null,
+  "false_positives": 0,
+  "false_positive_tests": [],
+  "seconds": 4.2,
+  "names_a_cause": false
+ }
+}

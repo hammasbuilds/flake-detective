@@ -22,3 +22,6 @@ coverage.xml
 # raw file with scripts/third_party_census.py and the summary with scripts/census_summary.py.
 docs/third-party-census.json
 docs/*-census.json.poisoned
+
+# The re-runner baselines live in their own virtualenv; they are not dependencies.
+.venv-rerun/

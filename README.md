@@ -10,6 +10,9 @@ every condition printed beside the verdict.
 `pytest-rerunfailures` makes a flaky test go away. This tells you why it was flaky. It
 is for maintainers and CI owners of Python test suites.
 
+
+&#9878; **[Measured against it &rarr;](https://github.com/hammasbuilds/flake-detective/blob/main/docs/COMPARISON.md)** On the benchmark's answer key, of the four causes both tools can be scored on: this names 4 of 4, a re-runner notices 3, masks 2, and **never retries the order-dependent one at all** - the order never changes, so that flake is unreachable to it.
+
 ## What it does
 
 - Runs your suite in arms that each vary one condition - test order, `PYTHONHASHSEED`, a
