@@ -26,7 +26,16 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
-from inject_and_score import _ignore, is_junction  # noqa: E402
+# Imported under a guard, not bare. CI's second job copies `tests/` alone next to an
+# installed distribution, where this directory does not exist; a bare import raises
+# ModuleNotFoundError during collection, which fails the whole job instead of
+# skipping this file.
+
+inject_and_score = pytest.importorskip(
+    "inject_and_score", reason="scripts/ and research/ are not shipped with the tests"
+)
+_ignore = inject_and_score._ignore
+is_junction = inject_and_score.is_junction
 
 
 def make_junction(link: Path, target: Path) -> bool:
