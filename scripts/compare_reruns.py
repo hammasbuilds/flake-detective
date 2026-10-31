@@ -129,7 +129,7 @@ def investigate(suite: Path, seed: int) -> tuple[dict[str, str], set[str], str]:
     # --json takes a FILE. Passing "-" wrote the report to a file called "-" and left
     # stdout as the progress display, so the parse found no JSON after a full 28-run
     # investigation had already been paid for.
-    with tempfile.TemporaryDirectory(prefix="fd-json-") as hold:
+    with tempfile.TemporaryDirectory(prefix="fd-json-", dir=scratch_dir()) as hold:
         report = Path(hold) / "report.json"
         proc = subprocess.run(
             [sys.executable, "-m", "flake_detective", "investigate", str(suite),
@@ -171,6 +171,20 @@ def searched_causes_from(data: dict) -> set[str]:
     return set(searched_causes(adapted))
 
 
+def scratch_dir() -> Path:
+    """A temp parent on the same drive as this repository.
+
+    `tempfile` follows TMPDIR, which is C: here, and these scripts write generated
+    fixtures, JSON payloads and - in the sibling census scripts - whole package trees.
+    C: went from 58 GB free to 31 over one day of measurements because nothing said
+    which drive. CENSUS_SCRATCH overrides it, the same variable the census scripts use.
+    """
+    root = Path(os.environ.get("CENSUS_SCRATCH", str(ROOT.parent / "_census_scratch")))
+    out = root / "tmp"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--reruns", type=int, default=6,
@@ -186,7 +200,7 @@ def main() -> int:
     known = {test: cause for test, cause in TRUTH.items() if cause is not None}
     stable = [test for test, cause in TRUTH.items() if cause is None]
 
-    with tempfile.TemporaryDirectory(prefix="flake-compare-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="flake-compare-", dir=scratch_dir()) as tmp:
         suite = write(Path(tmp) / "fx")
         print(f"fixture at {suite}: {len(known)} known-flaky, {len(stable)} stable\n",
               flush=True)
