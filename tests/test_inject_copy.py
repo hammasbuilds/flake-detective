@@ -39,7 +39,8 @@ def make_junction(link: Path, target: Path) -> bool:
         return False
     out = subprocess.run(
         ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     return out.returncode == 0 and link.exists()
 
@@ -53,7 +54,9 @@ def repo_with_a_junction(tmp_path: Path) -> Path:
 
     repo = tmp_path / "repo"
     (repo / "tests").mkdir(parents=True)
-    (repo / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    (repo / "tests" / "test_ok.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
     (repo / ".git").mkdir()
     (repo / ".git" / "config").write_text("[core]\n", encoding="utf-8")
     if not make_junction(repo / "data", outside.parent):
@@ -88,5 +91,7 @@ def test_the_junk_directories_are_still_skipped(repo_with_a_junction: Path) -> N
     """The junction filter replaced ignore_patterns; it must not have dropped its job."""
     repo = repo_with_a_junction
     assert _ignore(str(repo), [".git", "tests", "data", "__pycache__"]) == {
-        ".git", "data", "__pycache__"
+        ".git",
+        "data",
+        "__pycache__",
     }

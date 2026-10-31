@@ -35,10 +35,10 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import shutil
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -52,8 +52,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from inject_and_score import arm_measured  # noqa: E402
-TOP = ("https://raw.githubusercontent.com/hugovk/top-pypi-packages/main/"
-       "top-pypi-packages.min.json")
+
+TOP = "https://raw.githubusercontent.com/hugovk/top-pypi-packages/main/top-pypi-packages.min.json"
 TEST_FILE = re.compile(r"^[^/]+/(?:src/)?(tests?)/(?:.*/)?test_[^/]*\.py$")
 
 
@@ -100,8 +100,11 @@ def scored_rows(results: list[dict]) -> list[dict]:
     scored zero runs because the suite needs its own interpreter. Eight of them were
     counted as scored and their four misses each averaged into a per-cause rate.
     """
-    return [r for r in results
-            if isinstance(r, dict) and any(arm_measured(a) for a in r.get("score") or [])]
+    return [
+        r
+        for r in results
+        if isinstance(r, dict) and any(arm_measured(a) for a in r.get("score") or [])
+    ]
 
 
 def _is_infra_failure(row: dict) -> bool:
@@ -188,7 +191,6 @@ def fetch_json(url: str, tries: int = 4) -> dict:
     raise IndexUnreachable(f"{type(last).__name__}: {last}")
 
 
-
 def top_packages(count: int) -> list[str]:
     data = fetch_json(TOP)
     rows = data["rows"] if isinstance(data, dict) else data
@@ -245,6 +247,7 @@ def declared_groups(root: Path) -> list[str]:
         return []
     try:
         import tomllib
+
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return []
@@ -258,9 +261,13 @@ def install_test_deps(root: Path, py: Path, pip) -> list[str]:
     """Install every test-ish group and extra. Returns what was actually applied."""
     applied = []
     for group in declared_groups(root):
-        done = subprocess.run(["uv", "pip", "install", "-q", "--python", str(py),
-                               "--group", group], cwd=root,
-                              capture_output=True, text=True, timeout=900)
+        done = subprocess.run(
+            ["uv", "pip", "install", "-q", "--python", str(py), "--group", group],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
         if done.returncode == 0 and "was not found" not in (done.stderr or ""):
             applied.append(f"group:{group}")
     if not applied:
@@ -268,8 +275,14 @@ def install_test_deps(root: Path, py: Path, pip) -> list[str]:
             if pip(f"{root}[{extra}]").returncode == 0:
                 applied.append(f"extra:{extra}")
                 break
-    for req in ("test-requirements.txt", "requirements-test.txt", "dev-requirements.txt",
-                "requirements-dev.txt", "requirements/test.txt", "requirements/dev.txt"):
+    for req in (
+        "test-requirements.txt",
+        "requirements-test.txt",
+        "dev-requirements.txt",
+        "requirements-dev.txt",
+        "requirements/test.txt",
+        "requirements/dev.txt",
+    ):
         path = root / req
         if path.exists() and pip("-r", str(path)).returncode == 0:
             applied.append(req)
@@ -277,8 +290,9 @@ def install_test_deps(root: Path, py: Path, pip) -> list[str]:
     return applied
 
 
-def prepare(root: Path, package: str, version: str, tests: Path,
-            cap: float) -> tuple[Path | None, str, float]:
+def prepare(
+    root: Path, package: str, version: str, tests: Path, cap: float
+) -> tuple[Path | None, str, float]:
     """A venv whose clean suite passes quickly, or the reason it does not qualify."""
     venv = root.parent / "venv"
     _remove_tree(venv)
@@ -292,8 +306,13 @@ def prepare(root: Path, package: str, version: str, tests: Path,
     py = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 
     def pip(*spec: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
-        return subprocess.run(["uv", "pip", "install", "-q", "--python", str(py), *spec],
-                              cwd=cwd, capture_output=True, text=True, timeout=900)
+        return subprocess.run(
+            ["uv", "pip", "install", "-q", "--python", str(py), *spec],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
 
     base = pip(str(root), "pytest")
     if base.returncode:
@@ -307,16 +326,20 @@ def prepare(root: Path, package: str, version: str, tests: Path,
     t0 = time.time()
     try:
         clean = subprocess.run(
-            [str(py), "-m", "pytest", str(tests), "-q", "--no-header",
-             "-p", "no:cacheprovider"],
-            cwd=root, capture_output=True, text=True, timeout=max(cap * 1.5, 60))
+            [str(py), "-m", "pytest", str(tests), "-q", "--no-header", "-p", "no:cacheprovider"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=max(cap * 1.5, 60),
+        )
     except subprocess.TimeoutExpired:
         limit = max(cap * 1.5, 60)
         return None, f"clean suite exceeded {limit:.0f}s, over the {cap:.0f}s cap", limit
     seconds = time.time() - t0
     text = clean.stdout + clean.stderr
-    collected = max((int(m.group(1)) for m in re.finditer(r"(\d+) (?:passed|collected)", text)),
-                    default=0)
+    collected = max(
+        (int(m.group(1)) for m in re.finditer(r"(\d+) (?:passed|collected)", text)), default=0
+    )
     failed = max((int(m.group(1)) for m in re.finditer(r"(\d+) failed", text)), default=0)
     if collected == 0:
         return None, "clean suite collects no tests", seconds
@@ -333,16 +356,23 @@ def prepare(root: Path, package: str, version: str, tests: Path,
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--packages", type=int, default=200)
-    ap.add_argument("--max-clean-seconds", type=float, default=25.0,
-                    help="a suite slower than this clean is excluded, because an "
-                         "investigation runs it 28 times (25)")
+    ap.add_argument(
+        "--max-clean-seconds",
+        type=float,
+        default=25.0,
+        help="a suite slower than this clean is excluded, because an "
+        "investigation runs it 28 times (25)",
+    )
     ap.add_argument("--runs", type=int, default=7)
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--budget", type=int, default=1800)
-    ap.add_argument("--resume", action="store_true",
-                    help="keep rows already in --out and process only the rest. This "
-                         "census has been restarted repeatedly for harness fixes, and "
-                         "each restart previously discarded every completed candidate")
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help="keep rows already in --out and process only the rest. This "
+        "census has been restarted repeatedly for harness fixes, and "
+        "each restart previously discarded every completed candidate",
+    )
     ap.add_argument("--out", default="third-party-census.json")
     args = ap.parse_args()
 
@@ -354,8 +384,10 @@ def main() -> int:
     print(f"scratch: {SCRATCH}")
     names = top_packages(args.packages)
     print(f"{len(names)} packages from the external top-downloads list")
-    print(f"clean-suite cap: {args.max_clean_seconds}s (an investigation runs it "
-          f"{4 * args.runs} times)\n")
+    print(
+        f"clean-suite cap: {args.max_clean_seconds}s (an investigation runs it "
+        f"{4 * args.runs} times)\n"
+    )
     out = Path(args.out)
     results: list[dict] = []
     if args.resume and out.exists():
@@ -365,7 +397,10 @@ def main() -> int:
             results = []
     retry = [r for r in results if isinstance(r, dict) and _is_infra_failure(r)]
     if retry:
-        print(f"retrying {len(retry):,} candidates whose exclusion was an infrastructure failure, not a finding")
+        print(
+            f"retrying {len(retry):,} candidates whose exclusion was an "
+            f"infrastructure failure, not a finding"
+        )
         results = [r for r in results if not (isinstance(r, dict) and _is_infra_failure(r))]
     done_names = {r["package"] for r in results if isinstance(r, dict) and "package" in r}
     if done_names:
@@ -388,28 +423,41 @@ def main() -> int:
                 row["excluded"] = "no sdist published"
             else:
                 row["version"], url = sd
-                with tempfile.TemporaryDirectory(prefix="fd-census-", dir=SCRATCH,
-                                                ignore_cleanup_errors=True) as tmp:
+                with tempfile.TemporaryDirectory(
+                    prefix="fd-census-", dir=SCRATCH, ignore_cleanup_errors=True
+                ) as tmp:
                     root = unpack(url, Path(tmp))
                     if root is None:
                         row["excluded"] = "sdist ships no test directory"
                     elif (tests := test_dir(root)) is None:
                         row["excluded"] = "no test_*.py under tests/"
                     else:
-                        py, why, seconds = prepare(root, name, row["version"], tests,
-                                                   args.max_clean_seconds)
+                        py, why, seconds = prepare(
+                            root, name, row["version"], tests, args.max_clean_seconds
+                        )
                         row["clean_run"] = why
                         row["clean_seconds"] = round(seconds, 1)
                         if py is None:
                             row["excluded"] = why
                         else:
                             report = Path(tmp) / "score.json"
-                            cmd = [sys.executable, str(HERE / "inject_and_score.py"), str(root),
-                                   "--runs", str(args.runs), "--jobs", str(args.jobs),
-                                   "--python", str(py), "--json", str(report)]
+                            cmd = [
+                                sys.executable,
+                                str(HERE / "inject_and_score.py"),
+                                str(root),
+                                "--runs",
+                                str(args.runs),
+                                "--jobs",
+                                str(args.jobs),
+                                "--python",
+                                str(py),
+                                "--json",
+                                str(report),
+                            ]
                             try:
-                                subprocess.run(cmd, capture_output=True, text=True,
-                                               timeout=args.budget)
+                                subprocess.run(
+                                    cmd, capture_output=True, text=True, timeout=args.budget
+                                )
                                 if report.exists():
                                     arms = json.loads(report.read_text(encoding="utf-8"))
                                     # No arm ran the suite -> an exclusion naming the
@@ -420,8 +468,7 @@ def main() -> int:
                                     else:
                                         reasons = sorted({a.get("outcome") or "?" for a in arms})
                                         row["excluded"] = (
-                                            "no arm ran the suite: "
-                                            + "; ".join(reasons)
+                                            "no arm ran the suite: " + "; ".join(reasons)
                                         )[:160]
                                         row["empty_score"] = arms
                                 else:
@@ -437,15 +484,20 @@ def main() -> int:
         results.append(row)
         state = row.get("excluded", "scored")
         rate = (time.time() - started) / measured
-        print(f"  [{i}/{len(names)}] {name:26} {state[:44]:44} "
-              f"{rate:.0f}s/pkg  {measured}/{todo} measured "
-              f"~{rate * (todo - measured) / 60:.0f}min left", flush=True)
+        print(
+            f"  [{i}/{len(names)}] {name:26} {state[:44]:44} "
+            f"{rate:.0f}s/pkg  {measured}/{todo} measured "
+            f"~{rate * (todo - measured) / 60:.0f}min left",
+            flush=True,
+        )
         out.write_text(json.dumps(results, indent=1), encoding="utf-8")
 
     scored = scored_rows(results)
     slow = [r for r in results if "over the" in str(r.get("excluded", ""))]
-    print(f"\n{len(scored)} of {len(results)} suites scored; {len(results) - len(scored)} "
-          f"excluded, of which {len(slow)} for exceeding the clean-time cap")
+    print(
+        f"\n{len(scored)} of {len(results)} suites scored; {len(results) - len(scored)} "
+        f"excluded, of which {len(slow)} for exceeding the clean-time cap"
+    )
     print(f"written to {out}")
     return 0
 

@@ -108,8 +108,16 @@ def summarise(rows: list[dict]) -> dict:
         for arm in arms:
             c = by_cause.setdefault(
                 arm["cause"],
-                {"arms": 0, "measured": 0, "found": 0, "cause_right": 0, "unmeasured": 0,
-                 "not_detected": 0, "cause_unknown": 0, "cause_wrong": 0},
+                {
+                    "arms": 0,
+                    "measured": 0,
+                    "found": 0,
+                    "cause_right": 0,
+                    "unmeasured": 0,
+                    "not_detected": 0,
+                    "cause_unknown": 0,
+                    "cause_wrong": 0,
+                },
             )
             c["arms"] += 1
             if not arm_measured(arm):
@@ -197,9 +205,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=ROOT / "docs" / "census-summary.json")
     args = ap.parse_args()
     if not args.census.exists():
-        raise SystemExit(
-            f"no census at {args.census} - run scripts/third_party_census.py first"
-        )
+        raise SystemExit(f"no census at {args.census} - run scripts/third_party_census.py first")
     summary = summarise(json.loads(args.census.read_text(encoding="utf-8")))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(summary, indent=1), encoding="utf-8")

@@ -107,7 +107,8 @@ class TestSweepText:
 
     def test_an_errored_sweep_renders_the_error(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            bench, "run",
+            bench,
+            "run",
             lambda runs, timeout, python, jobs, progress, arms: {"error": "no tests"},
         )
         text = bench.sweep_text(bench.sweep(counts=(1,)))

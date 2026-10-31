@@ -27,7 +27,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from flake_detective import cli, run as run_module  # noqa: E402
+from flake_detective import cli  # noqa: E402
+from flake_detective import run as run_module
 
 
 class TestSay:
@@ -95,9 +96,7 @@ class TestPositiveFloat:
             cli._positive_float(bad)
 
     @pytest.mark.parametrize("bad", ["abc", "", "12s", "1,5"])
-    def test_something_that_is_not_a_number_is_refused_with_its_own_message(
-        self, bad: str
-    ) -> None:
+    def test_something_that_is_not_a_number_is_refused_with_its_own_message(self, bad: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError, match="number of seconds"):
             cli._positive_float(bad)
 
@@ -123,6 +122,7 @@ class TestXdistAvailable:
         self, tmp_path, monkeypatch
     ) -> None:
         """A missing interpreter must not end the investigation."""
+
         def boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
             raise OSError("no such interpreter")
 

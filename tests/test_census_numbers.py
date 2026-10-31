@@ -73,14 +73,13 @@ def test_the_readme_quotes_the_summarys_per_cause_figures() -> None:
     s = _summary()
     text = _readme()
     for name, c in s["causes"].items():
-        row = [
-            line for line in text.splitlines()
-            if line.startswith(f"| {name} |")
-        ]
+        row = [line for line in text.splitlines() if line.startswith(f"| {name} |")]
         assert row, f"the per-cause table has no row for {name}"
         numbers = re.findall(r"([\d,]+)\s*(?:\(([\d.]+)%\))?", row[0])
         stated = [int(n.replace(",", "")) for n, _ in numbers if n]
-        assert c["measured"] in stated, f"{name}: the README does not state measured={c['measured']}"
+        assert c["measured"] in stated, (
+            f"{name}: the README does not state measured={c['measured']}"
+        )
         assert c["found"] in stated, f"{name}: the README does not state found={c['found']}"
         assert c["cause_right"] in stated, (
             f"{name}: the README does not state cause_right={c['cause_right']}"
@@ -158,9 +157,9 @@ def test_the_three_kinds_of_shortfall_are_separated() -> None:
     ), "the four outcomes must account for every arm that ran"
     assert s["found"] == s["measured_arms"] - s["not_detected"]
     assert s["cause_right"] + s["cause_unknown"] + s["cause_wrong"] == s["found"]
-    assert len(s["wrong_causes"]) == len({
-        (w["planted"], w["reported"]) for w in s["wrong_causes"]
-    }), "a planted/reported pair is listed twice"
+    assert len(s["wrong_causes"]) == len(
+        {(w["planted"], w["reported"]) for w in s["wrong_causes"]}
+    ), "a planted/reported pair is listed twice"
     assert sum(w["arms"] for w in s["wrong_causes"]) == s["cause_wrong"]
     text = _readme()
     for figure in (
@@ -172,6 +171,9 @@ def test_the_three_kinds_of_shortfall_are_separated() -> None:
     assert f"**{s['cause_wrong']}**" in text
     for cohort in s["causes"].values():
         assert (
-            cohort["cause_right"] + cohort["cause_unknown"] + cohort["cause_wrong"]
-            + cohort["not_detected"] == cohort["measured"]
+            cohort["cause_right"]
+            + cohort["cause_unknown"]
+            + cohort["cause_wrong"]
+            + cohort["not_detected"]
+            == cohort["measured"]
         )

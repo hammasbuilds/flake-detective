@@ -66,22 +66,27 @@ def ensure_baselines() -> dict[str, str]:
         subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
     versions: dict[str, str] = {}
     for package in ("pytest", "pytest-rerunfailures", "flaky"):
-        shown = subprocess.run([str(python), "-m", "pip", "show", package],
-                               capture_output=True, text=True)
+        shown = subprocess.run(
+            [str(python), "-m", "pip", "show", package], capture_output=True, text=True
+        )
         if shown.returncode != 0:
-            subprocess.run([str(python), "-m", "pip", "install", "-q",
-                            "--disable-pip-version-check", package], check=True)
-            shown = subprocess.run([str(python), "-m", "pip", "show", package],
-                                   capture_output=True, text=True, check=True)
+            subprocess.run(
+                [str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", package],
+                check=True,
+            )
+            shown = subprocess.run(
+                [str(python), "-m", "pip", "show", package],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
         for line in shown.stdout.splitlines():
             if line.startswith("Version:"):
                 versions[package] = line.split(":", 1)[1].strip()
     return versions
 
 
-def rerun_pass(
-    suite: Path, reruns: int, repeats: int
-) -> tuple[set[str], set[str], list[str]]:
+def rerun_pass(suite: Path, reruns: int, repeats: int) -> tuple[set[str], set[str], list[str]]:
     """(noticed, masked, transcripts) for a re-runner over the same suite.
 
     **noticed**: the test was retried at all, so the re-runner saw instability. The
@@ -103,9 +108,20 @@ def rerun_pass(
     transcripts: list[str] = []
     for _ in range(repeats):
         proc = subprocess.run(
-            [str(python_in(VENV)), "-m", "pytest", "-p", "no:cacheprovider",
-             f"--reruns={reruns}", "-rR", "-q", str(suite)],
-            capture_output=True, text=True, cwd=suite,
+            [
+                str(python_in(VENV)),
+                "-m",
+                "pytest",
+                "-p",
+                "no:cacheprovider",
+                f"--reruns={reruns}",
+                "-rR",
+                "-q",
+                str(suite),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=suite,
         )
         text = proc.stdout + proc.stderr
         transcripts.append(text)
@@ -132,14 +148,23 @@ def investigate(suite: Path, seed: int) -> tuple[dict[str, str], set[str], str]:
     with tempfile.TemporaryDirectory(prefix="fd-json-", dir=scratch_dir()) as hold:
         report = Path(hold) / "report.json"
         proc = subprocess.run(
-            [sys.executable, "-m", "flake_detective", "investigate", str(suite),
-             "--seed", str(seed), "--json", str(report)],
-            capture_output=True, text=True, cwd=ROOT,
+            [
+                sys.executable,
+                "-m",
+                "flake_detective",
+                "investigate",
+                str(suite),
+                "--seed",
+                str(seed),
+                "--json",
+                str(report),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
         )
         if not report.exists():
-            raise SystemExit(
-                f"investigate wrote no report:\n{(proc.stderr or proc.stdout)[-800:]}"
-            )
+            raise SystemExit(f"investigate wrote no report:\n{(proc.stderr or proc.stdout)[-800:]}")
         data = json.loads(report.read_text(encoding="utf-8"))
     # The key is "flakes", not "flaky", and the searched causes come from the arms that
     # actually ran - `searched_causes` is not a field of the report. Reading absent keys
@@ -165,9 +190,7 @@ def searched_causes_from(data: dict) -> set[str]:
     # It wants the investigation OBJECT (`inv.arms[i].name`); this reads the JSON report,
     # where arms are dicts. Only the container is adapted - the arm-to-cause mapping stays
     # in classify.ARM_CAUSE, which is the part that must not be copied.
-    adapted = SimpleNamespace(
-        arms=[SimpleNamespace(**arm) for arm in data.get("arms", [])]
-    )
+    adapted = SimpleNamespace(arms=[SimpleNamespace(**arm) for arm in data.get("arms", [])])
     return set(searched_causes(adapted))
 
 
@@ -187,11 +210,19 @@ def scratch_dir() -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--reruns", type=int, default=6,
-                    help="attempts pytest-rerunfailures is given per failing test")
-    ap.add_argument("--repeats", type=int, default=7,
-                    help="how many times the whole suite is run under the re-runner, so "
-                         "its detection is not decided by one roll")
+    ap.add_argument(
+        "--reruns",
+        type=int,
+        default=6,
+        help="attempts pytest-rerunfailures is given per failing test",
+    )
+    ap.add_argument(
+        "--repeats",
+        type=int,
+        default=7,
+        help="how many times the whole suite is run under the re-runner, so "
+        "its detection is not decided by one roll",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=ROOT / "docs" / "rerun-comparison.json")
     args = ap.parse_args()
@@ -202,8 +233,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="flake-compare-", dir=scratch_dir()) as tmp:
         suite = write(Path(tmp) / "fx")
-        print(f"fixture at {suite}: {len(known)} known-flaky, {len(stable)} stable\n",
-              flush=True)
+        print(f"fixture at {suite}: {len(known)} known-flaky, {len(stable)} stable\n", flush=True)
 
         start = time.perf_counter()
         found, searched, _ = investigate(suite, args.seed)
@@ -214,8 +244,11 @@ def main() -> int:
         start = time.perf_counter()
         noticed, masked, _ = rerun_pass(suite, args.reruns, args.repeats)
         theirs_seconds = time.perf_counter() - start
-        print(f"pytest-rerunfailures ({args.repeats} suite runs, --reruns="
-              f"{args.reruns}): {theirs_seconds:.0f}s", flush=True)
+        print(
+            f"pytest-rerunfailures ({args.repeats} suite runs, --reruns="
+            f"{args.reruns}): {theirs_seconds:.0f}s",
+            flush=True,
+        )
 
     # A re-runner names no cause, so it is scored on detection only. Passing it through
     # `score` with a placeholder cause would report 0% attribution as though it had tried
@@ -223,9 +256,7 @@ def main() -> int:
     detected_known = sorted(t for t in noticed if t in known)
     masked_known = sorted(t for t in masked if t in known)
     false_positives = sorted(t for t in noticed if t in set(stable))
-    scoreable = sorted(
-        t for t, cause in known.items() if not searched or cause in searched
-    )
+    scoreable = sorted(t for t, cause in known.items() if not searched or cause in searched)
     # Restricted to the causes BOTH sides can be scored on. Without this the two "4 of 4"
     # figures are over different sets: this tool cannot score needs-other-test here (the
     # isolation arm did not run), and the re-runner never retried the order-dependent test
@@ -276,17 +307,23 @@ def main() -> int:
     args.out.write_text(json.dumps(result, indent=1), encoding="utf-8")
 
     print(f"\n  known-flaky tests this platform can score: {len(scoreable)}")
-    print(f"  flake-detective      detected {ours.get('detected')}, "
-          f"cause right {ours.get('correct_cause')}, "
-          f"false positives {ours.get('false_positives')}")
-    print(f"  on the {len(scoreable)} cause(s) both sides can be scored on: "
-          f"flake-detective {len(scoreable)}, re-runner noticed {len(noticed_common)}, "
-          f"masked {len(masked_common)}")
+    print(
+        f"  flake-detective      detected {ours.get('detected')}, "
+        f"cause right {ours.get('correct_cause')}, "
+        f"false positives {ours.get('false_positives')}"
+    )
+    print(
+        f"  on the {len(scoreable)} cause(s) both sides can be scored on: "
+        f"flake-detective {len(scoreable)}, re-runner noticed {len(noticed_common)}, "
+        f"masked {len(masked_common)}"
+    )
     if never_seen_common:
         print(f"    never retried at all: {', '.join(never_seen_common)}")
-    print(f"  pytest-rerunfailures noticed {len(detected_known)} overall, "
-          f"masked {len(masked_known)}, names no cause, "
-          f"false positives {len(false_positives)}")
+    print(
+        f"  pytest-rerunfailures noticed {len(detected_known)} overall, "
+        f"masked {len(masked_known)}, names no cause, "
+        f"false positives {len(false_positives)}"
+    )
     if detected_known:
         print(f"    retried: {', '.join(detected_known)}")
     if masked_known:

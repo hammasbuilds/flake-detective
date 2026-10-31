@@ -46,7 +46,8 @@ def test_the_results_table_states_the_same_number_of_plants() -> None:
     planted = sum(1 for cause in fixture.TRUTH.values() if cause)
     stable = sum(1 for cause in fixture.TRUTH.values() if cause is None)
     text = README.read_text(encoding="utf-8")
-    assert f"**{planted} flaky tests, one per cause the tool can name, and {stable} stable ones**" in text, (
+    claim = f"**{planted} flaky tests, one per cause the tool can name, and {stable} stable ones**"
+    assert claim in text, (
         f"the Results section does not state {planted} flaky and {stable} stable tests, "
         f"which is what fixture.TRUTH holds"
     )
