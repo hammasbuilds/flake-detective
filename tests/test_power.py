@@ -271,6 +271,20 @@ def _published():
     return _json.loads(MEASURED.read_text(encoding="utf-8"))
 
 
+def _repo_file(path: _pathlib.Path) -> str:
+    """A file that lives in the repository rather than in the wheel.
+
+    The wheel job copies `tests/` alone into a scratch directory and runs it against the
+    installed package, which is what proves the suite does not secretly depend on the
+    source tree. A test that reads the README or `docs/` from there raises
+    FileNotFoundError during the run and fails the job - which is exactly how this one
+    broke. Skipping names the reason instead.
+    """
+    if not path.is_file():
+        pytest.skip(f"{path.name} is not present - running against an installed wheel")
+    return path.read_text(encoding="utf-8")
+
+
 def test_the_fixtures_flakes_really_do_fail_about_half_the_time():
     """The claim the whole section rests on, measured rather than read off the source."""
     fixture = _published()["fixture"]
@@ -314,7 +328,7 @@ def test_the_default_budget_row_is_the_one_both_documents_quote():
     assert row["power_at_the_fixtures_rates"] == pytest.approx(0.982, abs=5e-4)
     assert row["power_at_2_percent"] == pytest.approx(0.132, abs=5e-4)
     for doc in (RESULTS_DOC, README):
-        text = doc.read_text(encoding="utf-8")
+        text = _repo_file(doc)
         assert "34.9%" in text, doc.name
         assert "86.8%" in text, doc.name
         assert "149" in text, doc.name
@@ -331,7 +345,7 @@ def test_power_rises_with_the_budget_at_every_rate():
 
 def test_the_documents_no_longer_claim_a_few_runs_generalise():
     """The sweep's curve is about attribution; an edit must not quietly widen it back."""
-    text = RESULTS_DOC.read_text(encoding="utf-8")
+    text = _repo_file(RESULTS_DOC)
     assert "measures **attribution**" in text
     assert "not the power of a budget" in text
     assert "reach 95% confidence against no flake rate at all" in text
