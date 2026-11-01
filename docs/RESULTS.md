@@ -125,10 +125,35 @@ That refusal was added after the sweep caught the alternative. The earlier versi
 the nondeterministic test as `clock` at one run per arm — it passed in the single baseline run
 and failed in the single clock run, satisfying every rule. Confident, and wrong.
 
-**A few runs per arm is enough here.** That is a property of this fixture, whose flaky
-tests fail 30–70% of the time. A test failing one run in twenty needs far more: the chance of
-*seeing* a flip in `n` runs is `1 - (19/20)^n`, which is 23% at 5 runs and 43% at 11. The
-run count is a bound on what can be seen, not a quality setting.
+**A few runs per arm is enough here.** That is a property of this fixture, and the rates
+are now measured rather than estimated: a 120-run investigation
+(`docs/fixture-rates.json`) puts the clock test at **0.433**, the hash-seed test at
+**0.525** and the nondeterministic one at **0.533**, a mean of **0.497**. Half is the
+easiest rate there is to catch, because it maximises the chance an arm sees both outcomes,
+and the fixture says so on purpose - a hash-order test over eight elements fails under
+nearly every seed and reads as broken rather than flaky.
+
+So the sweep's detection curve measures **attribution**, which is what `bench` exists for,
+and not the power of a budget. `research/power.py` separates them. Under the flip criterion
+`1 - (1-p)^n - p^n`:
+
+| runs per arm | power at the fixture's rates | at a 10% flake | at a 2% flake | smallest rate found with 95% confidence |
+|---:|---:|---:|---:|---:|
+| 2 | 0.496 | 0.180 | 0.039 | none |
+| 3 | 0.744 | 0.270 | 0.059 | none |
+| 5 | 0.932 | 0.409 | 0.096 | none |
+| **7** (default) | **0.982** | **0.522** | **0.132** | **34.9%** |
+| 11 | 0.999 | 0.686 | 0.199 | 23.8% |
+| 29 | 1.000 | 0.953 | 0.443 | 9.8% |
+| 149 | 1.000 | 1.000 | 0.951 | 2.0% |
+
+**Two runs per arm reach 95% confidence against no flake rate at all** - the smallest
+budget that does is 6, and only against a coin-flip test - so the sweep reporting detection
+1.0 there is one sample per budget landing well, not a budget that suffices. At the default
+seven, a test failing one run in fifty goes unseen **86.8%** of the time, and finding it at
+95% confidence would take **149 runs per arm**. A clean report now prints that bound
+instead of leaving the reader to work it out. The run count is a bound on what can be seen,
+not a quality setting.
 
 ---
 

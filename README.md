@@ -200,7 +200,7 @@ that many runs can miss), or pick arms with `--arms`.
 
 | option | default | what it does |
 |---|---|---|
-| `--runs N` | 7 | runs per arm. 1 sees instability but names no cause (one baseline run cannot flip); 7 misses a two-test order dependence 0.8% of the time, 5 misses it 3.1% |
+| `--runs N` | 7 | runs per arm. 1 sees instability but names no cause (one baseline run cannot flip); 7 misses a two-test order dependence 0.8% of the time, 5 misses it 3.1%. Seven reaches 95% confidence only against a flake failing more than **34.9%** of the time - a one-in-fifty flake is missed **86.8%** of the time and needs **149** runs per arm. A clean report prints that bound; see `research/power.py` |
 | `--arms LIST` | `order,hashseed,clock` | also `timezone`, `locale`, `parallel`, `isolation`, or `all`. Unknown names are refused |
 | `--python PATH` | this interpreter | the interpreter (or venv directory) your tests run with; must have pytest |
 | `--jobs N` | 1 | pytest processes at once — see above before raising it |

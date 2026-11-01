@@ -1,0 +1,144 @@
+{
+ "what": "The power of a rerun budget under the flip criterion, against the planted fixture's measured flake rates and against realistic ones. Explains what docs/sweep.json's detection curve does and does not establish.",
+ "default_runs": 7,
+ "fixture": {
+  "available": true,
+  "runs_per_arm": 120,
+  "flakes": {
+   "test_clock_dependent.py::test_second_is_even": {
+    "cause": "clock",
+    "arm_it_responds_to": "clock",
+    "rate": 0.433,
+    "runs_in_that_arm": 120
+   },
+   "test_hash_dependent.py::test_first_of_a_set_is_stable": {
+    "cause": "hash-seed",
+    "arm_it_responds_to": "hashseed",
+    "rate": 0.525,
+    "runs_in_that_arm": 120
+   },
+   "test_nondeterministic.py::test_unseeded_random": {
+    "cause": "nondeterminism",
+    "arm_it_responds_to": "baseline",
+    "rate": 0.533,
+    "runs_in_that_arm": 120
+   }
+  }
+ },
+ "fixture_rate_mean": 0.497,
+ "sweep": {
+  "available": true,
+  "budgets_swept": [
+   1,
+   2,
+   3,
+   5,
+   7,
+   11
+  ],
+  "smallest_budget_with_detection_1": 2,
+  "samples_per_budget": 1
+ },
+ "by_budget": {
+  "1": {
+   "detectable_rate_at_95": null,
+   "power_at_the_fixtures_rates": 0.0,
+   "power_at_10_percent": 0.0,
+   "power_at_2_percent": 0.0
+  },
+  "2": {
+   "detectable_rate_at_95": null,
+   "power_at_the_fixtures_rates": 0.4959,
+   "power_at_10_percent": 0.18,
+   "power_at_2_percent": 0.0392
+  },
+  "3": {
+   "detectable_rate_at_95": null,
+   "power_at_the_fixtures_rates": 0.7438,
+   "power_at_10_percent": 0.27,
+   "power_at_2_percent": 0.0588
+  },
+  "5": {
+   "detectable_rate_at_95": null,
+   "power_at_the_fixtures_rates": 0.9323,
+   "power_at_10_percent": 0.4095,
+   "power_at_2_percent": 0.0961
+  },
+  "7": {
+   "detectable_rate_at_95": 0.34935297344611504,
+   "power_at_the_fixtures_rates": 0.9816,
+   "power_at_10_percent": 0.5217,
+   "power_at_2_percent": 0.1319
+  },
+  "11": {
+   "detectable_rate_at_95": 0.2384043861837298,
+   "power_at_the_fixtures_rates": 0.9985,
+   "power_at_10_percent": 0.6862,
+   "power_at_2_percent": 0.1993
+  },
+  "29": {
+   "detectable_rate_at_95": 0.09814462767729565,
+   "power_at_the_fixtures_rates": 1.0,
+   "power_at_10_percent": 0.9529,
+   "power_at_2_percent": 0.4434
+  },
+  "59": {
+   "detectable_rate_at_95": 0.049507609888226944,
+   "power_at_the_fixtures_rates": 1.0,
+   "power_at_10_percent": 0.998,
+   "power_at_2_percent": 0.6964
+  },
+  "149": {
+   "detectable_rate_at_95": 0.01990481622068502,
+   "power_at_the_fixtures_rates": 1.0,
+   "power_at_10_percent": 1.0,
+   "power_at_2_percent": 0.9507
+  }
+ },
+ "power_table_at_the_default": [
+  {
+   "rate": 0.5,
+   "flip_power_at_this_budget": 0.9844,
+   "observed_power_at_this_budget": 0.9922,
+   "never_failed_once": 0.0078,
+   "runs_for_target_flip_power": 6
+  },
+  {
+   "rate": 0.25,
+   "flip_power_at_this_budget": 0.8665,
+   "observed_power_at_this_budget": 0.8665,
+   "never_failed_once": 0.1335,
+   "runs_for_target_flip_power": 11
+  },
+  {
+   "rate": 0.1,
+   "flip_power_at_this_budget": 0.5217,
+   "observed_power_at_this_budget": 0.5217,
+   "never_failed_once": 0.4783,
+   "runs_for_target_flip_power": 29
+  },
+  {
+   "rate": 0.05,
+   "flip_power_at_this_budget": 0.3017,
+   "observed_power_at_this_budget": 0.3017,
+   "never_failed_once": 0.6983,
+   "runs_for_target_flip_power": 59
+  },
+  {
+   "rate": 0.02,
+   "flip_power_at_this_budget": 0.1319,
+   "observed_power_at_this_budget": 0.1319,
+   "never_failed_once": 0.8681,
+   "runs_for_target_flip_power": 149
+  },
+  {
+   "rate": 0.01,
+   "flip_power_at_this_budget": 0.0679,
+   "observed_power_at_this_budget": 0.0679,
+   "never_failed_once": 0.9321,
+   "runs_for_target_flip_power": 299
+  }
+ ],
+ "what_the_sweep_establishes": "That the classifier attributes correctly once a flake has flipped, which is what it was built to measure. Not that two runs per arm are enough: the fixture's flakes fail about half the time, the easiest rate there is, and at two runs no budget reaches 95% confidence against any rate at all (the smallest that does is 6, and only against a coin-flip test).",
+ "caveat_for_a_clean_report": "7 runs per arm reaches 95% confidence only against a flake\n  failing more than 34.9% of the time; a rarer one probably did not flip"
+}

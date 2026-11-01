@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from flake_detective import power
 from flake_detective.types import Cause, Investigation
 
 # Every cause, most actionable first. Built from the enum and checked against it, because
@@ -116,16 +117,33 @@ def text(inv: Investigation) -> str:
         out.append("A suite can still be flaky at a rate this many runs cannot see -")
         out.append("raise --runs to lower that bound.")
         if per_arm:
-            # The bound, computed, rather than left for the reader to work out.
-            # A test that fails in half of all runs survives n of them undetected
-            # with probability 2^-n; one that fails in a tenth, 0.9^n. Both are
-            # worth stating, because "nothing found" means very different things
-            # at five runs and at fifty.
+            # The bound, computed, rather than left for the reader to work out. The
+            # arithmetic lives in `power` and is not repeated here: this block carried its
+            # own copy of `(1 - p) ** n`, which is one quantity with two implementations
+            # and nothing comparing them.
+            #
+            # Two columns because they are two questions. "Never failed once" is the case
+            # that makes this clean report wrong - the test looked like any other passing
+            # test. "No flip" also counts an arm where it failed every time, which is not
+            # a dangerous miss, but it is what decides whether a cause could have been
+            # named. They differ only for a frequent flake.
             out.append("")
             out.append(f"  what {per_arm} runs per arm can miss:")
-            for label, p in (("fails in half of all runs", 0.5), ("fails in one run in ten", 0.1)):
+            out.append(f"    {'a test that fails':<34}{'never failed':>14}{'no flip':>10}")
+            for label, rate in (
+                ("in half of all runs", 0.5),
+                ("in one run in ten", 0.1),
+                ("in one run in fifty", 0.02),
+            ):
+                never = 1.0 - power.observed_probability(rate, per_arm)
+                no_flip = 1.0 - power.flip_probability(rate, per_arm)
+                out.append(f"    {label:<34}{never:>13.1%}{no_flip:>10.1%}")
+            out.append("")
+            out.append(f"  {power.caveat(per_arm)}.")
+            needed = power.runs_for_power(0.02)
+            if needed and needed > per_arm:
                 out.append(
-                    f"    a test that {label:<26} is missed {(1 - p) ** per_arm:>7.1%} of the time"
+                    f"  A one-in-fifty flake needs {needed} runs per arm at that confidence."
                 )
     else:
         counts = inv.by_cause()

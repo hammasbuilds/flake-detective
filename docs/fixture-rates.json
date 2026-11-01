@@ -1,0 +1,88 @@
+{
+  "_run": {
+    "repo": "fd_fix1",
+    "revision": "not a git checkout",
+    "python": "3.14.7",
+    "platform": "win32",
+    "runs_per_arm": 120,
+    "arms": [
+      "baseline",
+      "hashseed",
+      "clock"
+    ],
+    "order_seed": null,
+    "when": "2026-11-01T10:00:32Z"
+  },
+  "total_tests": 16,
+  "seconds": 244.3,
+  "seed": 145239854,
+  "interrupted": false,
+  "arms": [
+    {
+      "name": "baseline",
+      "description": "identical conditions, repeated",
+      "runs": 120,
+      "attempted": 120
+    },
+    {
+      "name": "hashseed",
+      "description": "PYTHONHASHSEED varied",
+      "runs": 120,
+      "attempted": 120
+    },
+    {
+      "name": "clock",
+      "description": "the wall clock was frozen at a different date each run",
+      "runs": 120,
+      "attempted": 120
+    }
+  ],
+  "by_cause": {
+    "clock": 1,
+    "hash-seed": 1,
+    "nondeterminism": 1
+  },
+  "flakes": [
+    {
+      "test": "test_clock_dependent.py::test_second_is_even",
+      "cause": "clock",
+      "evidence": "stable under identical repetition; failed 52 of 120 runs when the wall clock was frozen at a different date each run",
+      "rates": {
+        "baseline": 0.0,
+        "hashseed": 0.0,
+        "clock": 0.433
+      },
+      "suggested_fix": "it reads the wall clock; freeze or inject the time"
+    },
+    {
+      "test": "test_hash_dependent.py::test_first_of_a_set_is_stable",
+      "cause": "hash-seed",
+      "evidence": "stable under identical repetition; failed 63 of 120 runs when PYTHONHASHSEED varied",
+      "rates": {
+        "baseline": 0.0,
+        "hashseed": 0.525,
+        "clock": 0.0
+      },
+      "suggested_fix": "something iterates a dict or set and depends on the order; sort it"
+    },
+    {
+      "test": "test_nondeterministic.py::test_unseeded_random",
+      "cause": "nondeterminism",
+      "evidence": "flipped with nothing changed: failed 64 of 120 identical runs",
+      "rates": {
+        "baseline": 0.533,
+        "hashseed": 0.442,
+        "clock": 0.475
+      },
+      "suggested_fix": "it flips with nothing changed - unseeded randomness, a race, or state left behind by an earlier run (a cache, a file outside tmp_path, a database row). If it failed once and then never again, look for the state first"
+    }
+  ],
+  "always_failed": [
+    "test_needs_setup.py::test_needs_the_helper_to_have_run"
+  ],
+  "unobserved": [],
+  "ok": true,
+  "problem": null,
+  "incomplete_arms": [],
+  "skipped_arms": []
+}

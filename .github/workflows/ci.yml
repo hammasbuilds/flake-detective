@@ -27,8 +27,8 @@ jobs:
 
       - name: Lint
         run: |
-          uv run ruff check src tests scripts demo.py
-          uv run ruff format --check src tests scripts demo.py
+          uv run ruff check src tests scripts research demo.py
+          uv run ruff format --check src tests scripts research demo.py
 
       # Unit tests only. The benchmark runs a real pytest suite thirty-odd times and
       # deliberately contains clock- and hash-dependent tests, so it is run by hand and
