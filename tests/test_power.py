@@ -257,6 +257,7 @@ def test_a_tighter_error_budget_costs_more_runs():
 
 import json as _json  # noqa: E402
 import pathlib as _pathlib  # noqa: E402
+import re as _re  # noqa: E402
 
 ROOT = _pathlib.Path(__file__).resolve().parents[1]
 MEASURED = ROOT / "research" / "results" / "power.json"
@@ -322,10 +323,75 @@ def test_two_runs_per_arm_reach_confidence_against_nothing():
         assert sweep["samples_per_budget"] == 1
 
 
+# Every cell of the power table as `docs/RESULTS.md` prints it, held as the strings the
+# document prints rather than as floats: the document publishes three decimals, so the
+# criterion is that the artefact formatted to three decimals is what the row says. A float
+# tolerance gets this wrong in both directions - 5e-4 rejects a correct 0.4095 printed as
+# 0.409, and 1e-3 would accept a row that is off by a whole unit in the last place.
+# runs -> (at the fixture's rates, at a 10% flake, at a 2% flake)
+PUBLISHED_POWER_TABLE = {
+    2: ("0.496", "0.180", "0.039"),
+    3: ("0.744", "0.270", "0.059"),
+    5: ("0.932", "0.409", "0.096"),
+    7: ("0.982", "0.522", "0.132"),
+    11: ("0.999", "0.686", "0.199"),
+    29: ("1.000", "0.953", "0.443"),
+    149: ("1.000", "1.000", "0.951"),
+}
+POWER_KEYS = ("power_at_the_fixtures_rates", "power_at_10_percent", "power_at_2_percent")
+
+
+def _power_table_rows() -> dict[int, str]:
+    """The published table's data rows, keyed by budget.
+
+    Found by its own header rather than by "a line starting with `| 2 |`": RESULTS.md has
+    several tables whose first column is a run count, and a bare search picks the wrong
+    one.
+    """
+    lines = _repo_file(RESULTS_DOC).splitlines()
+    start = next((i for i, ln in enumerate(lines) if "power at the fixture" in ln.lower()), None)
+    assert start is not None, "RESULTS.md has no power table header"
+    out: dict[int, str] = {}
+    for line in lines[start + 1 :]:
+        if not line.startswith("|"):
+            break
+        # The default row is written `| **7** (default) |`, so take the leading digits
+        # rather than trying to strip the decoration off.
+        cell = line.split("|")[1].strip()
+        digits = _re.match(r"\**(\d+)\**", cell)
+        if digits:
+            out[int(digits.group(1))] = line
+    return out
+
+
+@pytest.mark.parametrize("runs", sorted(PUBLISHED_POWER_TABLE))
+def test_every_cell_of_the_published_power_table(runs: int):
+    """All 21 cells, not the three the default row happened to quote.
+
+    Only `power_at_the_fixtures_rates` and `power_at_2_percent` of the 7-run row were
+    pinned, so the entire `at a 10% flake` column - including the default row's 0.522 -
+    was published with nothing checking it. The monotonicity test below reads that column
+    but would pass on any rising sequence.
+    """
+    row = _published()["by_budget"][str(runs)]
+    for key, printed in zip(POWER_KEYS, PUBLISHED_POWER_TABLE[runs], strict=True):
+        assert f"{row[key]:.3f}" == printed, (runs, key, row[key], printed)
+
+
+def test_the_published_power_table_is_the_table_in_the_document():
+    """Otherwise the cells above are pinned against a document nobody publishes."""
+    rows = _power_table_rows()
+    assert set(rows) == set(PUBLISHED_POWER_TABLE), (sorted(rows), sorted(PUBLISHED_POWER_TABLE))
+    for runs, cells in PUBLISHED_POWER_TABLE.items():
+        for printed in cells:
+            assert printed in rows[runs], (runs, printed, rows[runs])
+
+
 def test_the_default_budget_row_is_the_one_both_documents_quote():
     row = _published()["by_budget"][str(power.DEFAULT_RUNS)]
     assert row["detectable_rate_at_95"] == pytest.approx(0.349, abs=5e-4)
     assert row["power_at_the_fixtures_rates"] == pytest.approx(0.982, abs=5e-4)
+    assert row["power_at_10_percent"] == pytest.approx(0.522, abs=5e-4)
     assert row["power_at_2_percent"] == pytest.approx(0.132, abs=5e-4)
     for doc in (RESULTS_DOC, README):
         text = _repo_file(doc)
