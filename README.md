@@ -201,6 +201,10 @@ that many runs can miss), or pick arms with `--arms`.
 | option | default | what it does |
 |---|---|---|
 | `--runs N` | 7 | runs per arm. 1 sees instability but names no cause (one baseline run cannot flip); 7 misses a two-test order dependence 0.8% of the time, 5 misses it 3.1%. Seven reaches 95% confidence only against a flake failing more than **34.9%** of the time - a one-in-fifty flake is missed **86.8%** of the time and needs **149** runs per arm. A clean report prints that bound; see `research/power.py` |
+| `--until-decided` | off | spend runs sequentially and stop each arm when every test it observed has a verdict, instead of running a fixed `--runs`. Wald's SPRT against `--p0` and `--p1`, capped at `--max-runs`, with `--runs` as the minimum. Turns the clean half of a report from a bound into a decision, and names the tests it could not settle — see below |
+| `--p0 RATE` | 0.001 | failure rate at or below which a test is accepted as stable. Lower costs more runs per clean test |
+| `--p1 RATE` | 0.02 | failure rate at or above which a test is called flaky. This is the rate a fixed seven-run budget has 13% power against |
+| `--max-runs N` | 200 | cap on an adaptive arm's runs. Below the runs needed to accept a clean test — printed in the report — every clean test ends undecided, which the report says rather than rounding to stable |
 | `--arms LIST` | `order,hashseed,clock` | also `timezone`, `locale`, `parallel`, `isolation`, or `all`. Unknown names are refused |
 | `--python PATH` | this interpreter | the interpreter (or venv directory) your tests run with; must have pytest |
 | `--jobs N` | 1 | pytest processes at once — see above before raising it |
@@ -220,6 +224,60 @@ collected, every test skipped, or an arm in which no run could be scored. Exit 2
 comes with the reason, in pytest's own words where there are any, on stderr. `130`
 interrupted with Ctrl-C: running pytest processes are killed and the runs that finished
 are still reported, marked INTERRUPTED.
+
+## Spending the runs where the evidence is thin
+
+A fixed budget spends the same seven runs on a test that flipped in run two as on one that
+has passed sixty times, which is the wrong way round. `--until-decided` spends them
+sequentially instead, by Wald's sequential probability ratio test (*Sequential Analysis*,
+1947): after each run, accumulate the log-likelihood ratio between "stable enough" (`--p0`)
+and "flaky enough" (`--p1`) and stop as soon as either is decisively favoured.
+
+**This does not make the search cheap, and the README would be lying if it said so.**
+Ruling out a one-in-fifty flake costs about 150 runs however they are spent, and the
+cheapest possible path to accepting a clean test is a fixed number of consecutive passes
+that no stopping rule can go below. What changes is the *kind* of answer:
+
+| | a fixed budget | `--until-decided` |
+|---|---|---|
+| found nothing | a **bound**: "no flake above 34.9%" | a **decision** per test: "its failure rate is at or below `--p0`, at 95% power against `--p1`" |
+| ran out of evidence | silent — the test reads as stable | listed as **undecided**, by name |
+| a test that fails at once | still gets the full budget | decided on the first failure, and the arm moves on |
+
+The third row is where the saving is. A suite whose tests all declare themselves early
+costs about what the fixed budget cost; only a genuinely marginal test pays the cap.
+
+The honest failure mode is the cap. `--max-runs` below the runs needed to accept a clean
+test means no clean test can be decided at all, so every one of them ends up in the
+undecided list — a worse report than the fixed budget's, not a better one. The report prints
+that floor and says out loud when the cap is below it rather than quietly rounding.
+
+### What it actually cost
+
+Three budgets against the suite `flake-detective fixture` plants, whose flakes fail about
+half the time. `research/adaptive.py` runs all three and writes
+[docs/adaptive.json](docs/adaptive.json):
+
+| budget | runs | flakes found | tests undecided | what a clean test gets |
+|---|---:|---:|---:|---|
+| `--runs 7` (default) | 28 | 5 | n/a | a bound: no flake above **34.9%** |
+| `--runs 59` | 236 | 5 | n/a | a bound: no flake above **5.0%** |
+| `--until-decided --max-runs 70` | **236** | 5 | **0** | a decision: every test at or below **0.1%** |
+
+**The sequential budget cost exactly what the fixed budget at the floor cost** — 59 runs per
+arm, four arms, 236 runs, and it stopped there rather than spending its 70-run cap. That is
+the expected result on a suite with no marginal test: 59 consecutive passes is the cheapest
+path to accepting a clean test at these settings, and every flake here declares itself on
+its first failure. All three budgets name the same five flakes, which is the check that the
+stopping rule changed what the search *cost* and not what it *found*.
+
+So the saving is not in the run count. It is in the last two columns. `n/a` is not zero: a
+fixed budget **cannot** list the tests it failed to settle, because every test it did not
+catch reads as stable — which is the claim being checked. Asked for a cap of 40, below the
+59-run floor, the same run reports **14 of 16 tests undecided** rather than a clean bill of
+health, and says that the cap was the reason.
+
+Rebuild the comparison with `python research/adaptive.py`.
 
 ## How it works
 

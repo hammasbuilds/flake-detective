@@ -155,6 +155,42 @@ seven, a test failing one run in fifty goes unseen **86.8%** of the time, and fi
 instead of leaving the reader to work it out. The run count is a bound on what can be seen,
 not a quality setting.
 
+### 2b. Spending the runs sequentially instead
+
+For a while this table was the whole of it: the tool computed that its own budget was weak
+and went on spending seven runs. `--until-decided` spends them by Wald's sequential
+probability ratio test instead, stopping each arm when every test it has observed has a
+verdict. `research/adaptive.py` compares three budgets on the same fixture and writes
+`docs/adaptive.json`:
+
+| budget | runs | flakes found | tests undecided | what a clean test gets |
+|---|---:|---:|---:|---|
+| `--runs 7` | 28 | 5 | n/a | a bound: no flake above **34.9%** |
+| `--runs 59` | 236 | 5 | n/a | a bound: no flake above **5.0%** |
+| `--until-decided --max-runs 70` | **236** | 5 | **0** | a decision: every test at or below **0.1%** |
+
+At `--p0 0.001 --p1 0.05` the sequential test needs **59** consecutive passes to accept a
+clean test and **1** failure to call one flaky. The middle row exists so the comparison is
+falsifiable: it spends the same 236 runs a fixed budget would, and if sequential spending
+bought nothing the two rows would be identical.
+
+They are identical in the first three columns. **The sequential arm spent exactly the
+floor - 59 runs per arm - and stopped there rather than reaching its 70-run cap**, and all
+three budgets named the same five flakes. So the stopping rule changed what the search
+*cost* and not what it *found*, which is the only way the comparison means anything.
+
+The difference is the last two columns, and `n/a` there is not zero. A fixed budget cannot
+list the tests it failed to settle: every test it did not catch reads as stable, which is
+the claim this whole section exists to check. The same investigation at `--max-runs 40`,
+below the 59-run floor, reports **14 of 16 tests undecided** and says the cap was the
+reason - a worse report than the fixed budget's, and an honest one.
+
+**What this does not claim.** Sequential spending is not cheaper. Ruling out a
+one-in-fifty flake costs about 150 runs however they are spent, and the floor is a floor.
+What changes is that a clean result becomes a decision with a stated error rate instead of
+a bound, and the tests the evidence never reached are named instead of being folded into
+the clean half.
+
 ---
 
 ## 3. Five real repositories

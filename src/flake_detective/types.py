@@ -125,6 +125,14 @@ class Arm:
     interrupted: bool = False
     """Ctrl-C arrived while this arm was running; only the runs that finished count."""
 
+    stopped_early: bool = False
+    """The adaptive budget decided this arm had enough evidence before its cap.
+
+    Distinct from `interrupted`: an arm that stopped early finished every run it started
+    and reached a verdict on every test it observed, where an interrupted one did not.
+    Reported, because `runs` is then not the number asked for and a reader comparing two
+    arms' run counts needs to know why they differ."""
+
     @property
     def unscored(self) -> int:
         return max(self.attempted - self.runs, 0)
@@ -252,6 +260,19 @@ class Investigation:
 
     interrupted: bool = False
     """Ctrl-C stopped the investigation; what is here is from the runs that finished."""
+
+    budget: dict = field(default_factory=dict)
+    """The adaptive budget's rule and cap, from `power.budget_shape`. Empty under a fixed
+    budget, which is the default."""
+
+    undecided: list[str] = field(default_factory=list)
+    """Under an adaptive budget: tests the cap was reached on without a verdict.
+
+    The field the mode exists for. A fixed budget cannot populate it - every test it did
+    not catch reads as stable - and an adaptive run that reported nothing while leaving
+    forty tests at the cap would be making exactly the unbounded claim `power.py`
+    objects to. Empty list and empty `budget` mean a fixed budget; empty list with a
+    `budget` set means every test reached a verdict."""
 
     skipped_arms: list[tuple[str, str]] = field(default_factory=list)
     """Arms the user asked for that this platform cannot run, as (name, reason).

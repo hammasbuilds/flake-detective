@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from flake_detective import freeze
+from flake_detective import freeze, power
 from flake_detective import run as arms_mod
 from flake_detective.classify import UNDIRECTED, classify
 from flake_detective.types import Arm, Cause, Investigation
@@ -121,6 +121,30 @@ class Options:
     that is known not to share such things across processes.
     """
 
+    until_decided: bool = False
+    """Spend runs sequentially instead of by a fixed count, stopping each arm as soon as
+    every test it has observed has a verdict.
+
+    `power.py` computes what a fixed budget buys and the answer is uncomfortable: seven
+    runs reach 95% confidence only against a test failing more than 34.9% of the time,
+    and a one-in-fifty flake needs 149 runs per arm. Raising `runs` to 149 would spend
+    149 runs on every test in the suite, almost all of which declare themselves in the
+    first few. Wald's sequential test spends them where the evidence is thin instead:
+    `p0` and `p1` set what counts as stable and as flaky, `max_runs` caps the worst case,
+    and a test the cap is reached on is reported **undecided** rather than stable.
+
+    `runs` keeps its meaning as the minimum, so a suite whose arms would otherwise stop
+    at the first run still gets the fixed budget's coverage of the obvious cases."""
+
+    p0: float = power.DEFAULT_P0
+    """Failure rate at or below which a test is accepted as stable. See `power.Sprt`."""
+
+    p1: float = power.DEFAULT_P1
+    """Failure rate at or above which a test is called flaky. See `power.Sprt`."""
+
+    max_runs: int = 200
+    """Cap on an adaptive arm's runs. Not a statistical quantity - a wall-clock one."""
+
     freeze_clock: bool = True
     """Pin the wall clock in every arm except the clock arm, which varies it.
 
@@ -185,6 +209,9 @@ class _State:
     tests: list[str] = field(default_factory=list)
     built: list[Arm] = field(default_factory=list)
     inv: Investigation | None = None
+    budget: dict = field(default_factory=dict)
+    """The adaptive budget's shape, empty under a fixed budget. Carried on the state
+    rather than returned, so a Ctrl-C report still says what rule was in force."""
 
 
 def investigate(
@@ -254,6 +281,29 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
     # Decide every arm before running any, so the progress line can count down to
     # the end of the whole investigation rather than the end of one arm.
     n, t, py, jobs = opts.runs, opts.timeout, opts.python, opts.jobs
+    # The adaptive budget. `n` becomes the cap each arm may spend; the stopping rule
+    # ends the arm as soon as every test it has observed has a verdict, so a suite whose
+    # tests all declare themselves early costs what the fixed budget cost, and only a
+    # suite with a genuinely marginal test pays the cap.
+    sprt = None
+    stop = None
+    if opts.until_decided:
+        sprt = power.Sprt(opts.p0, opts.p1)
+        n = max(opts.max_runs, opts.runs)
+        minimum = opts.runs
+
+        def stop(arm: Arm) -> bool:
+            # The minimum is checked first and separately. Without it, a test whose very
+            # first run fails crosses the flaky boundary at once on some settings, and
+            # the arm would stop having never had the chance to observe the rest of the
+            # suite - the order arm in particular needs several shuffles before its
+            # evidence means anything.
+            if arm.runs < minimum:
+                return False
+            return power.all_decided(sprt, arm.failures, arm.observed if arm.tracked else {})
+
+        state.budget = power.budget_shape(sprt, n)
+        state.budget["minimum_runs"] = minimum
     # Arms asked for that this platform cannot run. Collected here so the finished
     # report can say what was NOT searched, rather than leaving that on the progress
     # stream where --quiet hides it and the JSON never saw it.
@@ -264,7 +314,9 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
             "baseline",
             n,
             f"{n} identical runs",
-            lambda tick: arms_mod.baseline_arm(repo, target, n, t, epoch, py, jobs, tick),
+            lambda tick: arms_mod.baseline_arm(
+                repo, target, n, t, epoch, py, jobs, tick, stop_when=stop
+            ),
         )
     ]
     if "order" in opts.arms:
@@ -274,7 +326,18 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
                 n,
                 f"{n} shuffled runs",
                 lambda tick: arms_mod.order_arm(
-                    repo, target, tests, n, t, epoch, state.seed, py, jobs, tick, rootdir
+                    repo,
+                    target,
+                    tests,
+                    n,
+                    t,
+                    epoch,
+                    state.seed,
+                    py,
+                    jobs,
+                    tick,
+                    rootdir,
+                    stop_when=stop,
                 ),
             )
         )
@@ -284,7 +347,9 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
                 "hashseed",
                 n,
                 f"{n} runs, PYTHONHASHSEED 1..{n}",
-                lambda tick: arms_mod.hashseed_arm(repo, target, n, t, epoch, py, jobs, tick),
+                lambda tick: arms_mod.hashseed_arm(
+                    repo, target, n, t, epoch, py, jobs, tick, stop_when=stop
+                ),
             )
         )
     if "timezone" in opts.arms:
@@ -302,7 +367,9 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
                     "timezone",
                     n,
                     f"{n} runs, TZ varied",
-                    lambda tick: arms_mod.timezone_arm(repo, target, n, t, epoch, py, jobs, tick),
+                    lambda tick: arms_mod.timezone_arm(
+                        repo, target, n, t, epoch, py, jobs, tick, stop_when=stop
+                    ),
                 )
             )
     if "locale" in opts.arms:
@@ -316,7 +383,9 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
                     "locale",
                     n,
                     f"{n} runs, LANG and LC_ALL varied",
-                    lambda tick: arms_mod.locale_arm(repo, target, n, t, epoch, py, jobs, tick),
+                    lambda tick: arms_mod.locale_arm(
+                        repo, target, n, t, epoch, py, jobs, tick, stop_when=stop
+                    ),
                 )
             )
     if "parallel" in opts.arms:
@@ -332,7 +401,7 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
                     n,
                     f"{n} runs across worker processes",
                     lambda tick: arms_mod.parallel_arm(
-                        repo, target, n, t, epoch, py, jobs=jobs, tick=tick
+                        repo, target, n, t, epoch, py, jobs=jobs, tick=tick, stop_when=stop
                     ),
                 )
             )
@@ -345,7 +414,7 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
                 n * len(tests),
                 f"{n} passes, {len(tests)} processes each",
                 lambda tick: arms_mod.isolation_arm(
-                    repo, target, n, t, epoch, py, tests, jobs, tick, rootdir
+                    repo, target, n, t, epoch, py, tests, jobs, tick, rootdir, stop_when=stop
                 ),
             )
         )
@@ -360,7 +429,9 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
                     "clock",
                     n,
                     f"{n} runs, frozen at a different date each time",
-                    lambda tick: arms_mod.clock_arm(repo, target, n, t, py, jobs, tick),
+                    lambda tick: arms_mod.clock_arm(
+                        repo, target, n, t, py, jobs, tick, stop_when=stop
+                    ),
                 )
             )
 
@@ -386,6 +457,26 @@ def _investigate(repo: Path, target: str, opts: Options, progress, state: _State
 
     inv = classify(built, tests)
     inv.skipped_arms = skipped
+    inv.budget = state.budget
+    if sprt is not None:
+        # The union across arms, and deliberately the union rather than the intersection:
+        # a test whose rate the baseline settled but which the order arm never resolved is
+        # a test this investigation did not finish with, and reporting only the tests no
+        # arm decided would hide it. Sorted so the report is stable between runs.
+        unsettled: set[str] = set()
+        for arm in built:
+            observed = arm.observed if arm.tracked else dict.fromkeys(tests, arm.runs)
+            for test, verdict in power.verdicts(sprt, arm.failures, observed).items():
+                if verdict == "undecided":
+                    unsettled.add(test)
+        # A test the investigation reached a conclusion about is not undecided, whatever
+        # the per-arm rates say. An order-dependent test failed 19 of 40 shuffled runs and
+        # 0 of 40 baseline runs, so the baseline arm left its rate unresolved - and the
+        # first version of this listed it both as a finding and as a test "this result says
+        # nothing about". The sequential test is a rate test per arm; the question the
+        # report answers is whether the suite has a flake, and that was answered here.
+        concluded = {f.test_id for f in inv.flakes} | set(inv.always_failed)
+        inv.undecided = sorted(unsettled - concluded)
     inv.provenance = _provenance(repo, opts, tuple(a.name for a in built))
     if tests and len(inv.unobserved) == len(tests):
         # Every test skipped, or none ever reached: "no flaky tests" would be true and

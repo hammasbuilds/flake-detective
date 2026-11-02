@@ -277,6 +277,171 @@ class Sprt:
         return -self.accept_flaky * self.accept_stable / second_moment
 
 
+# Defaults for the adaptive budget. p0 is "stable enough to stop looking" and p1 is
+# "flaky enough to report". They are not symmetric around anything: p1 = 2% is the rate
+# the fixed seven-run budget has 13% power against, which is the gap this mode exists to
+# close, and p0 = 0.1% is about one failure in a thousand runs - rarer than any suite's
+# rerun budget could pay to rule out, so a test accepted as stable at p0 is as stable as
+# this method can establish.
+DEFAULT_P0 = 0.001
+DEFAULT_P1 = 0.02
+
+
+def verdicts(
+    sprt: Sprt,
+    failures: dict[str, int],
+    observed: dict[str, int],
+) -> dict[str, str]:
+    """Each observed test's current SPRT verdict.
+
+    Keyed on `observed` rather than on `failures`, because a test that has passed every
+    run has no entry in `failures` at all and is exactly the test the stopping rule is
+    about. A test observed in no run yet is absent from both and is not decided by
+    default: it has no evidence, and `runs=0` sits at a log-ratio of zero, which is
+    strictly between the boundaries, so `decide` already calls it undecided.
+
+    More failures than observations is not clamped. `Sprt.decide` raises on it, and that
+    is the right outcome: the two tallies are filled in by one function from one merged
+    observation, so the pair disagreeing means the arm's bookkeeping is broken, and a
+    quiet `min()` would turn a broken arm into a confident verdict.
+
+    The verdict is about the failure **rate**, not about nondeterminism. A test that fails
+    every single run is "flaky" here because its rate is above `p1`; whether it flipped is
+    a separate question, answered by the classifier, and the two must not be conflated.
+    """
+    return {
+        test: sprt.decide(failures.get(test, 0), runs)
+        for test, runs in observed.items()
+        if runs > 0
+    }
+
+
+def all_decided(
+    sprt: Sprt,
+    failures: dict[str, int],
+    observed: dict[str, int],
+) -> bool:
+    """Has every observed test reached a verdict? The adaptive budget's stopping rule.
+
+    False when nothing has been observed yet, which is the safe direction: an arm whose
+    first run could not be scored would otherwise stop immediately, having looked at
+    nothing, and report every test as stable by vacuous truth.
+    """
+    decided = verdicts(sprt, failures, observed)
+    return bool(decided) and all(v != "undecided" for v in decided.values())
+
+
+def budget_shape(sprt: Sprt, cap: int) -> dict:
+    """What an adaptive budget costs, for the report and for a reader deciding the cap.
+
+    `runs_to_call_stable` is the floor: a test that passes every run cannot be called
+    stable before then, so a cap below it guarantees every clean test ends undecided -
+    which is a worse report than the fixed budget's, not a better one. The caller is
+    told rather than corrected, because a deliberately small cap with an honest
+    undecided count is a legitimate thing to ask for.
+    """
+    floor = sprt.runs_to_call_stable()
+    return {
+        "p0": sprt.p0,
+        "p1": sprt.p1,
+        "alpha": sprt.alpha,
+        "beta": sprt.beta,
+        "runs_to_call_stable": floor,
+        "runs_to_call_flaky": sprt.runs_to_call_flaky(),
+        "worst_case_runs": round(sprt.worst_case_runs(), 1),
+        "indifference_rate": round(sprt.indifference_rate, 5),
+        "cap": cap,
+        "cap_below_the_stable_floor": cap < floor,
+    }
+
+
+# How many discordant observations the classifier needs before it blames an arm. Imported
+# rather than retyped: it is `classify.MIN_DISCORDANT`, and a second copy of it here would
+# make this module's bound a bound on a threshold the tool does not use.
+def _min_discordant() -> int:
+    from flake_detective.classify import MIN_DISCORDANT  # noqa: PLC0415
+
+    return MIN_DISCORDANT
+
+
+def _binomial(n: int, p: float) -> list[float]:
+    """The full distribution of failures in `n` runs at rate `p`."""
+    return [math.comb(n, k) * p**k * (1.0 - p) ** (n - k) for k in range(n + 1)]
+
+
+def attribution_probability(
+    arm_rate: float,
+    runs: int,
+    baseline_rate: float = 0.0,
+    min_discordant: int | None = None,
+) -> float:
+    """Chance the classifier *blames an arm*, which is not the chance it sees a flake.
+
+    Everything above this function is about the flip criterion: did a test both pass and
+    fail somewhere. That is the criterion for *reporting* a test. Naming a cause is a
+    second, stricter question, and until this function existed nothing bounded it - so the
+    module computed the power of one criterion while the tool shipped two.
+
+    `classify._differs` blames an arm when the failures it saw differ from what the
+    baseline's rate predicts for the same run count by at least `MIN_DISCORDANT`
+    observations. With equal run counts the predicted count *is* the baseline's own count,
+    so the criterion is exactly `|X_arm - X_baseline| >= MIN_DISCORDANT` over two
+    independent binomials - computed here by convolution rather than approximated.
+
+    The consequence is uncomfortable and is the point of the function. At the default two
+    discordant observations and a clean baseline, an arm has to fail **twice** before it
+    can be blamed, so the attribution power at a low rate is roughly the square of the
+    detection power: at seven runs against a 2% flake, 13.2% of such flakes are seen and
+    **0.8%** can be attributed. A report that found a flake and named no cause is the
+    common outcome at a low rate, not an unusual one, and `Cause.UNKNOWN` is the honest
+    answer rather than a failure of the arms.
+
+    `baseline_rate` defaults to zero because that is the case the classifier can reach: a
+    baseline that both passed and failed makes the test NONDETERMINISM and no arm is
+    consulted at all. It is a parameter anyway, because a baseline that failed *every* run
+    is also stable, and the two-sample arithmetic is the same.
+    """
+    if not 0.0 <= arm_rate <= 1.0 or not 0.0 <= baseline_rate <= 1.0:
+        raise ValueError("a failure rate must be in [0, 1]")
+    if runs < 1:
+        raise ValueError(f"need at least one run, got {runs}")
+    threshold = _min_discordant() if min_discordant is None else min_discordant
+    arm = _binomial(runs, arm_rate)
+    base = _binomial(runs, baseline_rate)
+    total = 0.0
+    for i, pa in enumerate(arm):
+        if pa == 0.0:
+            continue
+        for j, pb in enumerate(base):
+            if pb and abs(i - j) >= threshold:
+                total += pa * pb
+    return total
+
+
+def attribution_runs_for_power(
+    rate: float,
+    power: float = DEFAULT_POWER,
+    baseline_rate: float = 0.0,
+    cap: int = 100_000,
+) -> int | None:
+    """Runs per arm needed before a cause can be named at `power`, or None past `cap`.
+
+    `None` rather than `cap`: a budget nobody would run is not an answer, and returning the
+    cap would read as one.
+    """
+    if not 0.0 < power < 1.0:
+        raise ValueError(f"power must be in (0, 1), got {power}")
+    runs = 1
+    while runs <= cap:
+        if attribution_probability(rate, runs, baseline_rate) >= power:
+            return runs
+        # The probability is monotone in `runs` here but the search is linear rather than
+        # a doubling-and-bisect, because the counts involved are small and a bisection on
+        # a value computed by convolution is where an off-by-one hides.
+        runs += 1
+    return None
+
+
 def power_table(
     runs: int = DEFAULT_RUNS,
     rates: tuple[float, ...] = REFERENCE_RATES,
@@ -293,6 +458,11 @@ def power_table(
             "observed_power_at_this_budget": round(observed_probability(rate, runs), 4),
             "never_failed_once": round((1.0 - rate) ** runs, 4),
             "runs_for_target_flip_power": runs_for_power(rate, power),
+            # The second criterion. Seeing a flake and being able to blame an arm for it
+            # are different questions with very different budgets, and a table carrying
+            # only the first overstates what a report can conclude.
+            "attribution_power_at_this_budget": round(attribution_probability(rate, runs), 4),
+            "runs_for_target_attribution_power": attribution_runs_for_power(rate, power),
         }
         for rate in rates
     ]

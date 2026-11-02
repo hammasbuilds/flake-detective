@@ -133,6 +133,40 @@ def _differs(arm: Arm, baseline: Arm, test_id: str) -> bool:
     return abs(observed - expected) >= MIN_DISCORDANT - 1e-9
 
 
+def _how_many_runs_would_separate(nearly: list[Arm], test_id: str) -> str:
+    """ "More runs would help" with the number in it.
+
+    The sentence this replaces said only that more runs would separate a cause from plain
+    nondeterminism, which is true and useless: the reader's next question is how many, and
+    the answer is computable. `power.attribution_runs_for_power` inverts the criterion that
+    produced this verdict - the same `MIN_DISCORDANT` threshold - at the rate this arm
+    actually showed.
+
+    The rate used is the **highest** among the arms that nearly cleared the bar, because
+    that is the cheapest of them to settle and the number should not be dearer than the
+    work actually required. It is an estimate from a handful of runs and is labelled as
+    one; a budget derived from a rate observed twice is a guide, not a guarantee.
+    """
+    from flake_detective import power  # noqa: PLC0415
+
+    rates = [a.rate(test_id) for a in nearly if a.seen(test_id)]
+    rates = [r for r in rates if r is not None and 0.0 < r < 1.0]
+    if not rates:
+        return "More runs would separate a cause from plain nondeterminism"
+    needed = power.attribution_runs_for_power(max(rates))
+    if needed is None:
+        return (
+            "No affordable number of runs would separate a cause from plain "
+            "nondeterminism at this rate"
+        )
+    return (
+        f"About {needed} runs per arm would separate a cause from plain nondeterminism "
+        f"at the {max(rates):.1%} rate seen here, against the "
+        f"{max(a.seen(test_id) for a in nearly)} run(s) this arm got - and that estimate "
+        "rests on the same few runs"
+    )
+
+
 def _any_rate_difference(arm: Arm, baseline: Arm, test_id: str) -> bool:
     """Did this arm land on ANY different failure rate than the baseline?
 
@@ -343,8 +377,8 @@ def classify(arms: list[Arm], tests: list[str]) -> Investigation:
                             f"{_count(a, test_id)} {_LABEL.get(a.name, a.name)}" for a in nearly
                         )
                         + f": a difference of fewer than {MIN_DISCORDANT} observations, "
-                        "which one underlying failure rate explains. More runs would "
-                        "separate a cause from plain nondeterminism",
+                        "which one underlying failure rate explains. "
+                        + _how_many_runs_would_separate(nearly, test_id),
                         rates,
                     )
                 )

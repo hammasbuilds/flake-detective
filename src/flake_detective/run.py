@@ -61,6 +61,12 @@ _COMMON = ["-p", "no:randomly", "-p", observe.PLUGIN_NAME]
 MAX_ARGV_CHARS = 20_000
 
 Tick = Callable[[], None]
+StopWhen = Callable[["Arm"], bool]
+"""Asked after every fully scored run: may this arm stop early?
+
+Takes an `Arm` rather than a run count, because the question the adaptive budget asks is
+about the per-test tallies on it. A rule that could only see how many runs had happened
+would not be a sequential test of anything."""
 
 
 # --- stopping cleanly on Ctrl-C ------------------------------------------------------------
@@ -466,6 +472,7 @@ def execute(
     runs: list[list[dict]],
     jobs: int = 1,
     tick: Tick | None = None,
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """Score an arm. Each run is one or more pytest calls whose observations are merged.
 
@@ -477,6 +484,26 @@ def execute(
 
     Ctrl-C stops the arm: running children are killed, and the runs that had already
     finished are still scored, with `arm.interrupted` set.
+
+    `stop_when` makes the budget adaptive. `runs` is then the **cap** rather than the
+    plan: after every fully scored run the rule is offered the evidence so far, and the
+    first time it says yes the remaining runs are abandoned and `arm.stopped_early` is
+    set. Two things about where the check sits:
+
+      * It is asked only once a run is **complete**. An isolation pass is one pytest call
+        per test, and stopping half way through one would leave a partial run that the
+        tallies cannot tell from a whole one, so the verdict would depend on how the pool
+        interleaved.
+      * It is asked about a **provisional** arm built as runs land, never about `arm`
+        itself. The authoritative tally is still taken at the end over the runs that
+        survived - a Ctrl-C casualty is dropped there - and tallying into `arm` as runs
+        arrived would have made that filtering impossible to apply.
+
+    With `jobs` above one the arm can overshoot the decision by up to `jobs - 1` runs,
+    because a wave already in flight is not cancelled. That is a few runs spent, not a
+    changed verdict: the extra observations are tallied like any others and can only add
+    evidence to a question already settled. It is written down because the run count in the
+    report is then not exactly the stopping rule's answer.
     """
     units = [(i, kw) for i, calls in enumerate(runs) for kw in calls]
     results: dict[int, list[Observed | None]] = {i: [] for i in range(len(runs))}
@@ -487,8 +514,14 @@ def execute(
 
     casualties: set[int] = set()
     casualty_why: list[str] = []
+    # Provisional tallies, for the stopping rule alone. See the docstring.
+    probe = Arm(arm.name, arm.description, tracked=arm.tracked)
+    done: set[int] = set()
+    expected = {i: len(calls) for i, calls in enumerate(runs)}
+    stop_early = False
 
     def record(i: int, res: tuple[Observed | None, str]) -> None:
+        nonlocal stop_early
         obs, why = res
         if stopping():
             return
@@ -501,23 +534,46 @@ def execute(
         elif obs is None and why and not arm.error:
             arm.error = why
         results[i].append(obs)
+        if stop_when is not None and i not in done and len(results[i]) == expected[i]:
+            done.add(i)
+            scored = [r for r in results[i] if r is not None]
+            if scored:
+                merged = scored[0]
+                for r in scored[1:]:
+                    merged = merged.merge(r)
+                _tally(probe, merged)
+                if stop_when(probe):
+                    stop_early = True
         if tick:
             tick()
 
     try:
         if jobs <= 1 or len(units) <= 1:
             for u in units:
+                if stop_early:
+                    break
                 record(*one(u))
         else:
             pool = ThreadPoolExecutor(max_workers=jobs)
             try:
-                pending = {pool.submit(one, u) for u in units}
+                # Submitted in waves of `jobs` when the budget is adaptive: the whole
+                # point is to not pay for runs the evidence has made unnecessary, and
+                # submitting every unit up front would pay for all of them.
+                queue = list(units)
+                wave = jobs if stop_when is not None else len(queue)
+                pending = {pool.submit(one, u) for u in queue[:wave]}
+                queue = queue[wave:]
                 while pending:
                     # Polled, not a blocking wait: on Windows an untimed wait on a lock
                     # does not return for Ctrl-C.
-                    done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
-                    for fut in done:
+                    finished_futures, pending = wait(
+                        pending, timeout=0.5, return_when=FIRST_COMPLETED
+                    )
+                    for fut in finished_futures:
                         record(*fut.result())
+                    if queue and not stop_early:
+                        take, queue = queue[:wave], queue[wave:]
+                        pending |= {pool.submit(one, u) for u in take}
             except BaseException:
                 stop_all()
                 raise
@@ -527,13 +583,18 @@ def execute(
         stop_all()
         arm.interrupted = True
 
+    arm.stopped_early = stop_early
     finished = [i for i in range(len(runs)) if len(results[i]) == len(runs[i])]
     if arm.interrupted:
         finished = [i for i in finished if i not in casualties]
     elif casualty_why and not arm.error:
         # Not ours: a test in the suite raised KeyboardInterrupt itself.
         arm.error = casualty_why[0]
-    arm.attempted += len(runs) if not arm.interrupted else len(finished)
+    # An arm that stopped early did not attempt the runs it abandoned. Counting the cap
+    # here would put every skipped run into `unscored`, and `unscored` is the field that
+    # says "pytest fell over this many times" - the saving would have been reported as a
+    # malfunction.
+    arm.attempted += len(finished) if (arm.interrupted or stop_early) else len(runs)
     for i in finished:
         scored = [r for r in results[i] if r is not None]
         # One unscoreable test does not invalidate an isolation pass, but a pass where
@@ -559,11 +620,12 @@ def baseline_arm(
     python: str = "",
     jobs: int = 1,
     tick: Tick | None = None,
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """Identical conditions, repeated. Anything that flips here is nondeterministic."""
     arm = Arm("baseline", "identical conditions, repeated")
     plan = [_call(repo, target, timeout, python, hashseed=0, epoch=epoch) for _ in range(runs)]
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)
 
 
 def order_arm(
@@ -578,6 +640,7 @@ def order_arm(
     jobs: int = 1,
     tick: Tick | None = None,
     rootdir: str = "",
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """The same tests, shuffled. Flips here mean one test's result depends on another's.
 
@@ -600,7 +663,7 @@ def order_arm(
                 rootdir=rootdir,
             )
         )
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)
 
 
 def hashseed_arm(
@@ -612,11 +675,12 @@ def hashseed_arm(
     python: str = "",
     jobs: int = 1,
     tick: Tick | None = None,
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """A different PYTHONHASHSEED each run, everything else identical."""
     arm = Arm("hashseed", "PYTHONHASHSEED varied")
     plan = [_call(repo, target, timeout, python, hashseed=i + 1, epoch=epoch) for i in range(runs)]
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)
 
 
 def clock_arm(
@@ -627,6 +691,7 @@ def clock_arm(
     python: str = "",
     jobs: int = 1,
     tick: Tick | None = None,
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """The wall clock frozen at a different instant each run.
 
@@ -646,7 +711,7 @@ def clock_arm(
         )
         for i in range(runs)
     ]
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)
 
 
 # Timezones chosen to disagree as much as possible about what "today" is: two of
@@ -731,6 +796,7 @@ def timezone_arm(
     python: str = "",
     jobs: int = 1,
     tick: Tick | None = None,
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """The same tests in a different timezone each run.
 
@@ -751,7 +817,7 @@ def timezone_arm(
         )
         for i in range(runs)
     ]
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)
 
 
 def locale_arm(
@@ -763,6 +829,7 @@ def locale_arm(
     python: str = "",
     jobs: int = 1,
     tick: Tick | None = None,
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """The same tests under a different locale each run."""
     arm = Arm("locale", "the locale varied")
@@ -780,7 +847,7 @@ def locale_arm(
                 extra_env={"LANG": name, "LC_ALL": name},
             )
         )
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)
 
 
 def xdist_available(repo: Path, python: str = "") -> bool:
@@ -813,6 +880,7 @@ def parallel_arm(
     workers: int = 4,
     jobs: int = 1,
     tick: Tick | None = None,
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """The same tests spread across worker processes.
 
@@ -840,7 +908,7 @@ def parallel_arm(
         )
         for _ in range(runs)
     ]
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)
 
 
 def isolation_arm(
@@ -854,6 +922,7 @@ def isolation_arm(
     jobs: int = 1,
     tick: Tick | None = None,
     rootdir: str = "",
+    stop_when: StopWhen | None = None,
 ) -> Arm:
     """Every test run ALONE, in its own process.
 
@@ -886,4 +955,4 @@ def isolation_arm(
         ]
         for _ in range(runs)
     ]
-    return execute(arm, plan, jobs, tick)
+    return execute(arm, plan, jobs, tick, stop_when)

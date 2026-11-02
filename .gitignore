@@ -28,3 +28,4 @@ docs/*-census.json.poisoned
 
 # Left by passing "-" to --json, which takes a FILE.
 -
+.scratch/

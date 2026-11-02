@@ -1,0 +1,127 @@
+{
+ "what": "Three rerun budgets against the planted fixture: the default seven runs, the same number of runs the sequential arm spends, and the sequential budget. The comparison is runs spent against the kind of answer a clean test gets, not the flake count - a difference in the flake count would mean the stopping rule changed what was found.",
+ "sprt": {
+  "p0": 0.001,
+  "p1": 0.05,
+  "alpha": 0.05,
+  "beta": 0.05,
+  "runs_to_call_stable": 59,
+  "runs_to_call_flaky": 1,
+  "worst_case_runs": 44.1,
+  "indifference_rate": 0.01269,
+  "cap": 70,
+  "cap_below_the_stable_floor": false
+ },
+ "fixed_budget_bounds": {
+  "runs_7": 0.34935297344611504,
+  "runs_59": 0.049507609888226944,
+  "runs_for_95_percent_power_against_2_percent": 149
+ },
+ "arms_compared": [
+  "order",
+  "hashseed",
+  "clock",
+  "baseline"
+ ],
+ "rows": [
+  {
+   "flakes": [
+    ".scratch/adaptive-tojt2v2h/test_clock_dependent.py::test_second_is_even",
+    ".scratch/adaptive-tojt2v2h/test_hash_dependent.py::test_first_of_a_set_is_stable",
+    ".scratch/adaptive-tojt2v2h/test_needs_setup.py::test_needs_the_helper_to_have_run",
+    ".scratch/adaptive-tojt2v2h/test_nondeterministic.py::test_unseeded_random",
+    ".scratch/adaptive-tojt2v2h/test_order_dependent.py::test_aaa_first_one_wins"
+   ],
+   "flake_count": 5,
+   "always_failed": [],
+   "runs_spent": {
+    "baseline": 7,
+    "order": 7,
+    "hashseed": 7,
+    "clock": 7
+   },
+   "runs_total": 28,
+   "stopped_early": [],
+   "undecided": null,
+   "undecided_count": null,
+   "undecided_is_measurable": false,
+   "budget": null,
+   "seconds": 87.1,
+   "total_tests": 16,
+   "label": "fixed 7"
+  },
+  {
+   "flakes": [
+    ".scratch/adaptive-tojt2v2h/test_clock_dependent.py::test_second_is_even",
+    ".scratch/adaptive-tojt2v2h/test_hash_dependent.py::test_first_of_a_set_is_stable",
+    ".scratch/adaptive-tojt2v2h/test_needs_setup.py::test_needs_the_helper_to_have_run",
+    ".scratch/adaptive-tojt2v2h/test_nondeterministic.py::test_unseeded_random",
+    ".scratch/adaptive-tojt2v2h/test_order_dependent.py::test_aaa_first_one_wins"
+   ],
+   "flake_count": 5,
+   "always_failed": [],
+   "runs_spent": {
+    "baseline": 59,
+    "order": 59,
+    "hashseed": 59,
+    "clock": 59
+   },
+   "runs_total": 236,
+   "stopped_early": [],
+   "undecided": null,
+   "undecided_count": null,
+   "undecided_is_measurable": false,
+   "budget": null,
+   "seconds": 597.3,
+   "total_tests": 16,
+   "label": "fixed 59"
+  },
+  {
+   "flakes": [
+    ".scratch/adaptive-tojt2v2h/test_clock_dependent.py::test_second_is_even",
+    ".scratch/adaptive-tojt2v2h/test_hash_dependent.py::test_first_of_a_set_is_stable",
+    ".scratch/adaptive-tojt2v2h/test_needs_setup.py::test_needs_the_helper_to_have_run",
+    ".scratch/adaptive-tojt2v2h/test_nondeterministic.py::test_unseeded_random",
+    ".scratch/adaptive-tojt2v2h/test_order_dependent.py::test_aaa_first_one_wins"
+   ],
+   "flake_count": 5,
+   "always_failed": [],
+   "runs_spent": {
+    "baseline": 59,
+    "order": 59,
+    "hashseed": 59,
+    "clock": 59
+   },
+   "runs_total": 236,
+   "stopped_early": [
+    "baseline",
+    "clock",
+    "hashseed",
+    "order"
+   ],
+   "undecided": [],
+   "undecided_count": 0,
+   "undecided_is_measurable": true,
+   "budget": {
+    "p0": 0.001,
+    "p1": 0.05,
+    "alpha": 0.05,
+    "beta": 0.05,
+    "runs_to_call_stable": 59,
+    "runs_to_call_flaky": 1,
+    "worst_case_runs": 44.1,
+    "indifference_rate": 0.01269,
+    "cap": 70,
+    "cap_below_the_stable_floor": false,
+    "minimum_runs": 7
+   },
+   "seconds": 596.7,
+   "total_tests": 16,
+   "label": "sequential, cap 70"
+  }
+ ],
+ "findings_agree": true,
+ "sequential_spent_the_floor_rather_than_the_cap": true,
+ "sequential_cost_the_same_as_the_fixed_floor": true,
+ "what_the_extra_runs_bought": "not a smaller run count - the same 236 - but a per-test decision in place of a bound, and an explicit list of the tests the cap was reached on. The fixed arm at the floor spends the same runs and can still only say 'no flake above 5.0%'."
+}

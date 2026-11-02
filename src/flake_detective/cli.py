@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-from flake_detective import __version__
+from flake_detective import __version__, power
 from flake_detective import bench as bench_mod
 from flake_detective import fixture as fixture_mod
 from flake_detective import report as report_mod
@@ -72,6 +72,22 @@ def _positive_int(text: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError(f"must be at least 1, got {n}")
     return n
+
+
+def _rate(text: str) -> float:
+    """A failure rate strictly inside (0, 1).
+
+    Zero and one are excluded rather than clamped: at p0 = 0 the likelihood ratio of a
+    passing run is log(1/1) = 0, every pass moves the evidence nowhere, and no number of
+    clean runs would ever accept a test as stable. The run would look like it was working.
+    """
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not 0.0 < value < 1.0:
+        raise argparse.ArgumentTypeError(f"a failure rate must be in (0, 1), got {value}")
+    return value
 
 
 def _positive_float(text: str) -> float:
@@ -254,6 +270,38 @@ def build_parser() -> argparse.ArgumentParser:
         "whether it breaks this one or this one needs it (costs about log2(n) extra runs "
         "per order-dependent test)",
     )
+    inv.add_argument(
+        "--until-decided",
+        action="store_true",
+        help="spend runs sequentially and stop each arm when every test it observed has "
+        "a verdict, instead of running a fixed --runs. Wald's SPRT against --p0 and "
+        "--p1, capped at --max-runs; --runs becomes the minimum. This does not make the "
+        "search cheap - ruling out a 2%% flake costs about 150 runs however they are "
+        "spent - it makes the clean answer a decision rather than a bound, and a test "
+        "the cap is reached on is reported undecided rather than stable",
+    )
+    inv.add_argument(
+        "--p0",
+        type=_rate,
+        default=power.DEFAULT_P0,
+        help=f"failure rate at or below which a test is accepted as stable "
+        f"(default {power.DEFAULT_P0}). Lower costs more runs per clean test",
+    )
+    inv.add_argument(
+        "--p1",
+        type=_rate,
+        default=power.DEFAULT_P1,
+        help=f"failure rate at or above which a test is called flaky "
+        f"(default {power.DEFAULT_P1}). This is the rate the fixed budget cannot see",
+    )
+    inv.add_argument(
+        "--max-runs",
+        type=_positive_int,
+        default=200,
+        help="cap on an adaptive arm's runs (default 200). A cap below the runs needed "
+        "to accept a clean test - printed in the report - leaves every clean test "
+        "undecided, which the report says rather than rounding to stable",
+    )
     inv.add_argument("--quiet", action="store_true", help="no progress on stderr")
 
     b = sub.add_parser(
@@ -399,6 +447,10 @@ def _main(argv: list[str] | None = None) -> int:
             freeze_clock=not a.no_freeze_clock,
             localise=a.localise,
             order_seed=a.seed,
+            until_decided=a.until_decided,
+            p0=a.p0,
+            p1=a.p1,
+            max_runs=a.max_runs,
         ),
         progress=say,
     )

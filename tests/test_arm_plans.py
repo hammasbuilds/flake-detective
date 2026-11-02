@@ -30,10 +30,15 @@ def captured(monkeypatch):
     """Capture the plan each arm hands to `execute`, instead of running it."""
     seen: dict = {}
 
-    def fake_execute(arm, plan, jobs, tick):  # noqa: ANN001, ANN202
+    def fake_execute(arm, plan, jobs, tick, stop_when=None):  # noqa: ANN001, ANN202
         seen["arm"] = arm
         seen["plan"] = list(plan)
         seen["jobs"] = jobs
+        # Recorded, not ignored: every arm has to forward the adaptive stopping rule, and
+        # three of the eight forward it through a signature where `rootdir` sits between
+        # `tick` and it. An arm that dropped it would silently run the fixed budget while
+        # the report printed a sequential one.
+        seen.setdefault("stop_when", {})[arm.name] = stop_when
         return arm
 
     monkeypatch.setattr(run_module, "execute", fake_execute)

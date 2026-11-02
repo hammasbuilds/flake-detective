@@ -38,6 +38,49 @@ def _short(test_id: str, width: int = 52) -> str:
     return test_id if len(test_id) <= width else "..." + test_id[-(width - 3) :]
 
 
+def _adaptive_bound(out: list[str], inv) -> None:
+    """What a clean adaptive run establishes, and for which tests it does not.
+
+    The fixed-budget power table is deliberately NOT printed beside this. There the run
+    count is a setting and the bound follows from it; here the run count is an outcome and
+    the claim rests on a per-test decision. Printing both would hand the reader two
+    different bounds for one result and no way to tell which governs.
+    """
+    b = inv.budget
+    if inv.undecided:
+        out.append(
+            f"{len(inv.undecided)} of {inv.total_tests} tests reached the "
+            f"{b['cap']}-run cap with no verdict."
+        )
+        out.append("This result says nothing about them:")
+        for test in inv.undecided[:20]:
+            out.append(f"    {test}")
+        if len(inv.undecided) > 20:
+            out.append(f"    ... and {len(inv.undecided) - 20} more")
+        out.append("")
+        out.append("Every other test was decided, not merely un-flipped: its failure")
+    else:
+        out.append("Every test was decided, not merely un-flipped: its failure")
+    out.append(
+        f"rate is at or below {b['p0']:.1%}, tested against {b['p1']:.1%} with "
+        f"alpha {b['alpha']:.0%}"
+    )
+    out.append(f"and beta {b['beta']:.0%}.")
+    out.append("")
+    out.append(
+        f"  sequential budget: minimum {b['minimum_runs']} runs, cap {b['cap']}, "
+        f"{b['runs_to_call_stable']} to accept a clean test"
+    )
+    if b["cap_below_the_stable_floor"]:
+        out.append("  the cap is below that floor, so no clean test could be decided")
+    out.append(
+        "  runs spent: "
+        + ", ".join(f"{a.name} {a.runs}" + ("*" if a.stopped_early else "") for a in inv.arms)
+    )
+    if any(a.stopped_early for a in inv.arms):
+        out.append("  * stopped early, every test it observed having been decided")
+
+
 def text(inv: Investigation) -> str:
     out: list[str] = []
     w = "=" * 74
@@ -106,6 +149,13 @@ def text(inv: Investigation) -> str:
             out.append(f"  {name:<10} {reason}")
         out.append("")
 
+    # On both branches, and for the same reason as the arms above. An adaptive run that
+    # found five flakes and left fourteen tests at the cap used to print the five and say
+    # nothing at all about the fourteen, because this block sat inside the clean branch.
+    if inv.budget:
+        _adaptive_bound(out, inv)
+        out.append("")
+
     if not inv.flakes:
         per_arm = min((a.runs for a in inv.arms if a.runs), default=0)
         if inv.interrupted:
@@ -114,9 +164,10 @@ def text(inv: Investigation) -> str:
             out.append(f"No flaky tests found by the arms that ran ({per_arm}+ runs each).")
         else:
             out.append(f"No flaky tests found across {per_arm} runs per arm.")
-        out.append("A suite can still be flaky at a rate this many runs cannot see -")
-        out.append("raise --runs to lower that bound.")
-        if per_arm:
+        if not inv.budget:
+            out.append("A suite can still be flaky at a rate this many runs cannot see -")
+            out.append("raise --runs to lower that bound.")
+        if per_arm and not inv.budget:
             # The bound, computed, rather than left for the reader to work out. The
             # arithmetic lives in `power` and is not repeated here: this block carried its
             # own copy of `(1 - p) ** n`, which is one quantity with two implementations
@@ -129,7 +180,12 @@ def text(inv: Investigation) -> str:
             # named. They differ only for a frequent flake.
             out.append("")
             out.append(f"  what {per_arm} runs per arm can miss:")
-            out.append(f"    {'a test that fails':<34}{'never failed':>14}{'no flip':>10}")
+            out.append("    (the last column is about a test failing at that rate in ONE arm,")
+            out.append("     with a clean baseline - a test that flips in the baseline too is")
+            out.append("     nondeterminism and no arm is blamed for it)")
+            out.append(
+                f"    {'a test that fails':<30}{'never failed':>13}{'no flip':>9}{'no cause':>10}"
+            )
             for label, rate in (
                 ("in half of all runs", 0.5),
                 ("in one run in ten", 0.1),
@@ -137,7 +193,14 @@ def text(inv: Investigation) -> str:
             ):
                 never = 1.0 - power.observed_probability(rate, per_arm)
                 no_flip = 1.0 - power.flip_probability(rate, per_arm)
-                out.append(f"    {label:<34}{never:>13.1%}{no_flip:>10.1%}")
+                # The third criterion the tool actually applies. Naming a cause needs the
+                # arm's failure count to differ from the baseline's by MIN_DISCORDANT, so
+                # at a low rate an arm has to fail twice - and the chance of that is close
+                # to the square of the chance of failing once. A table showing only the
+                # first two columns says what the report could have seen and not what it
+                # could have concluded.
+                no_cause = 1.0 - power.attribution_probability(rate, per_arm)
+                out.append(f"    {label:<30}{never:>12.1%}{no_flip:>9.1%}{no_cause:>10.1%}")
             out.append("")
             out.append(f"  {power.caveat(per_arm)}.")
             needed = power.runs_for_power(0.02)
@@ -145,6 +208,13 @@ def text(inv: Investigation) -> str:
                 out.append(
                     f"  A one-in-fifty flake needs {needed} runs per arm at that confidence."
                 )
+            blame = power.attribution_runs_for_power(0.02)
+            if blame and blame > per_arm:
+                out.append(
+                    f"  Naming its cause needs {blame}: an arm has to differ from the "
+                    "baseline by two"
+                )
+                out.append("  observations before it can be blamed, not by one.")
     else:
         counts = inv.by_cause()
         out.append(f"{len(inv.flakes)} flaky tests:")
@@ -236,6 +306,7 @@ def as_json(inv: Investigation) -> dict:
                 "runs": a.runs,
                 "attempted": a.attempted,
                 **({"interrupted": True} if a.interrupted else {}),
+                **({"stopped_early": True} if a.stopped_early else {}),
                 **({"error": a.error} if a.error else {}),
             }
             for a in inv.arms
@@ -245,6 +316,12 @@ def as_json(inv: Investigation) -> dict:
         "always_failed": inv.always_failed,
         "unobserved": inv.unobserved,
         "ok": inv.ok,
+        # The rule, and the tests it did not settle. `ok` on its own is the claim the
+        # adaptive mode exists to qualify: a run that decided 40 tests and left 4 at the
+        # cap is `ok` too, and a consumer reading only that flag would publish a clean
+        # result for the four it knows least about.
+        **({"budget": inv.budget} if inv.budget else {}),
+        **({"undecided": inv.undecided} if inv.budget else {}),
         "problem": inv.problem or None,
         "incomplete_arms": inv.incomplete,
         # Arms the user asked for that this platform cannot run. Without this a report
